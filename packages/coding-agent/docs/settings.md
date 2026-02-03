@@ -104,11 +104,13 @@ When a provider requests a retry delay longer than `maxDelayMs` (e.g., Google's 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
 | `terminal.showImages` | boolean | `true` | Show images in terminal (if supported) |
-| `terminal.scrollOutputOnly` | boolean | `false` | Scroll output only and keep editor/footer fixed (uses alternate screen; in-app selection) |
+| `terminal.scrollOutputOnly` | boolean | `true` | Scroll output only and keep editor/footer fixed (uses alternate screen; in-app selection) |
 | `images.autoResize` | boolean | `true` | Resize images to 2000x2000 max |
 | `images.blockImages` | boolean | `false` | Block all images from being sent to LLM |
 
 When `terminal.scrollOutputOnly` is enabled, pi switches to the alternate screen and captures the mouse wheel for output scrolling (Shift+wheel or Alt+wheel scrolls by page). Click to move the cursor in the editor, and drag to select (auto-copies) in both the editor and output. This disables normal terminal selection. Use `ctrl+shift+m` to toggle the mode on/off quickly. In tmux, enable mouse support (`set -g mouse on`) to forward wheel events to pi.
+
+Tinny Pi defaults this on; upstream pi defaults it off.
 
 ### Shell
 
