@@ -47,6 +47,13 @@ Pi runs in four modes: interactive, print or JSON, RPC for process integration, 
 npm install -g @mariozechner/pi-coding-agent
 ```
 
+**Coexistence note:** This package installs both `pi` and `tinny-pi`. If you need an upstream `pi` install and this fork side by side, install them into different prefixes and call the binaries by path (or adjust PATH order), for example:
+
+```bash
+npm install -g @mariozechner/pi-coding-agent --prefix ~/.local/tinny
+npm install -g @mariozechner/pi-coding-agent --prefix ~/.local/pi
+```
+
 Authenticate with an API key:
 
 ```bash
