@@ -18,7 +18,7 @@ Tools for building AI agents and managing LLM deployments.
 
 This fork is maintained by Continua AI. We’re big fans of Mario’s minimalist vision for pi; we keep upstream changes in sync and add a small set of opt-in ergonomics that help our internal dev workflow.
 
-- **Output-only scroll mode** (toggle with `ctrl+shift+m`): keeps the editor/footer fixed while scrolling output.
+- **Output-only scroll mode** (toggle with `ctrl+shift+m` or enable via `/settings` / `terminal.scrollOutputOnly`): keeps the editor/footer fixed while scrolling output, so you can read agent questions and type at the same time.
 - Default behavior is unchanged unless you enable the mode.
 - **Branching:** `main` tracks upstream; `continua` carries the Continua-specific changes.
 
