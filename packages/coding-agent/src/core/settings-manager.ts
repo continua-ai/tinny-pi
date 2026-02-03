@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
-import { CONFIG_DIR_NAME, getAgentDir } from "../config.js";
+import { APP_NAME, CONFIG_DIR_NAME, getAgentDir } from "../config.js";
 
 export interface CompactionSettings {
 	enabled?: boolean; // default: true
@@ -643,7 +643,8 @@ export class SettingsManager {
 	}
 
 	getScrollOutputOnly(): boolean {
-		return this.settings.terminal?.scrollOutputOnly ?? false;
+		const defaultValue = APP_NAME === "tinny-pi";
+		return this.settings.terminal?.scrollOutputOnly ?? defaultValue;
 	}
 
 	setScrollOutputOnly(enabled: boolean): void {
