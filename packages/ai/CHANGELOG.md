@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.51.3] - 2026-02-03
+
+### Fixed
+
+- Fixed xhigh thinking level support check to accept gpt-5.2 model IDs ([#1209](https://github.com/badlogic/pi-mono/issues/1209))
+
 ## [0.51.2] - 2026-02-03
 
 ## [0.51.1] - 2026-02-02
