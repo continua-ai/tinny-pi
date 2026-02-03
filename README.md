@@ -21,9 +21,33 @@ We use Tinny Pi internally at Continua AI. We love Mario’s minimalist pi and s
 
 ### Try it
 
-1. Use the `continua` branch of this repo (the Continua edition).
-2. Run `tinny-pi`, then enable output-only scroll with `ctrl+shift+m`.
-3. Scroll output while keeping the editor visible.
+```bash
+# Clone + switch to the Continua edition
+git clone https://github.com/continua-ai/tinny-pi
+cd tinny-pi
+git checkout continua
+
+# Install deps + build
+npm install
+npm run build
+
+# Install the CLI (registers the tinny-pi binary)
+npm install -g ./packages/coding-agent
+
+# Run
+export ANTHROPIC_API_KEY=...   # or /login inside the app
+tinny-pi
+```
+
+1. Ask for a long response (or run `!find . -type f`).
+2. Scroll with the mouse wheel — the editor/footer should stay pinned.
+3. Toggle on/off with `ctrl+shift+m`.
+
+If you use tmux, enable mouse forwarding:
+
+```tmux
+set -g mouse on
+```
 
 ### Demo: output-only scroll
 
