@@ -301,7 +301,7 @@ export class SettingsSelectorComponent extends Container {
 		items.splice(hardwareCursorIndex + 1, 0, {
 			id: "scroll-output-only",
 			label: "Scroll output only",
-			description: "Keep editor/footer fixed (disables mouse selection)",
+			description: "Keep editor/footer fixed (in-app mouse selection)",
 			currentValue: config.scrollOutputOnly ? "true" : "false",
 			values: ["true", "false"],
 		});

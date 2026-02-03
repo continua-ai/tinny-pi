@@ -4,8 +4,8 @@ Pi uses JSON settings files with project settings overriding global settings.
 
 | Location | Scope |
 |----------|-------|
-| `~/.pi/agent/settings.json` | Global (all projects) |
-| `.pi/settings.json` | Project (current directory) |
+| `~/.tinny-pi/agent/settings.json` | Global (all projects) |
+| `.tinny-pi/settings.json` | Project (current directory) |
 
 Edit directly or use `/settings` for common options.
 
@@ -104,11 +104,11 @@ When a provider requests a retry delay longer than `maxDelayMs` (e.g., Google's 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
 | `terminal.showImages` | boolean | `true` | Show images in terminal (if supported) |
-| `terminal.scrollOutputOnly` | boolean | `false` | Scroll output only and keep editor/footer fixed (uses alternate screen; disables selection) |
+| `terminal.scrollOutputOnly` | boolean | `false` | Scroll output only and keep editor/footer fixed (uses alternate screen; in-app selection) |
 | `images.autoResize` | boolean | `true` | Resize images to 2000x2000 max |
 | `images.blockImages` | boolean | `false` | Block all images from being sent to LLM |
 
-When `terminal.scrollOutputOnly` is enabled, pi switches to the alternate screen and captures the mouse wheel for output scrolling (Shift+wheel or Alt+wheel scrolls by page). This disables normal terminal selection. Use `ctrl+shift+m` to toggle the mode on/off quickly. In tmux, enable mouse support (`set -g mouse on`) to forward wheel events to pi.
+When `terminal.scrollOutputOnly` is enabled, pi switches to the alternate screen and captures the mouse wheel for output scrolling (Shift+wheel or Alt+wheel scrolls by page). Click to move the cursor in the editor, and drag to select (auto-copies) in both the editor and output. This disables normal terminal selection. Use `ctrl+shift+m` to toggle the mode on/off quickly. In tmux, enable mouse support (`set -g mouse on`) to forward wheel events to pi.
 
 ### Shell
 
@@ -139,7 +139,7 @@ When `terminal.scrollOutputOnly` is enabled, pi switches to the alternate screen
 
 These settings define where to load extensions, skills, prompts, and themes from.
 
-Paths in `~/.pi/agent/settings.json` resolve relative to `~/.pi/agent`. Paths in `.pi/settings.json` resolve relative to `.pi`. Absolute paths and `~` are supported.
+Paths in `~/.tinny-pi/agent/settings.json` resolve relative to `~/.tinny-pi/agent`. Paths in `.tinny-pi/settings.json` resolve relative to `.tinny-pi`. Absolute paths and `~` are supported.
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
@@ -202,16 +202,16 @@ See [packages.md](packages.md) for package management details.
 
 ## Project Overrides
 
-Project settings (`.pi/settings.json`) override global settings. Nested objects are merged:
+Project settings (`.tinny-pi/settings.json`) override global settings. Nested objects are merged:
 
 ```json
-// ~/.pi/agent/settings.json (global)
+// ~/.tinny-pi/agent/settings.json (global)
 {
   "theme": "dark",
   "compaction": { "enabled": true, "reserveTokens": 16384 }
 }
 
-// .pi/settings.json (project)
+// .tinny-pi/settings.json (project)
 {
   "compaction": { "reserveTokens": 8192 }
 }

@@ -92,4 +92,4 @@ export {
 	TUI,
 } from "./tui.js";
 // Utilities
-export { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "./utils.js";
+export { sliceByColumn, sliceWithWidth, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "./utils.js";

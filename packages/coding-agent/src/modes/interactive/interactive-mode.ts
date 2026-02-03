@@ -38,12 +38,14 @@ import {
 	matchesKey,
 	ProcessTerminal,
 	Spacer,
+	sliceByColumn,
 	Text,
 	TruncatedText,
 	TUI,
 	visibleWidth,
 } from "@mariozechner/pi-tui";
 import { spawn, spawnSync } from "child_process";
+import stripAnsi from "strip-ansi";
 import {
 	APP_NAME,
 	getAuthPath,
@@ -115,6 +117,8 @@ import {
 	type ThemeColor,
 	theme,
 } from "./theme/theme.js";
+
+const clamp = (value: number, min: number, max: number): number => Math.max(min, Math.min(value, max));
 
 /** Interface for components that can be expanded/collapsed */
 interface Expandable {
@@ -192,6 +196,9 @@ export class InteractiveMode {
 
 	// Scroll output behavior (keep editor/footer fixed)
 	private scrollOutputEnabled = false;
+	private mouseDragRegion: "output" | "editor" | null = null;
+	private mouseDragActive = false;
+	private outputSelection: { startRow: number; startCol: number; endRow: number; endCol: number } | null = null;
 
 	// Skill commands: command name -> skill file path
 	private skillCommands = new Map<string, string>();
@@ -1832,6 +1839,11 @@ export class InteractiveMode {
 		} else {
 			this.ui.onMouse = undefined;
 			this.layout.scrollToBottom();
+			this.outputSelection = null;
+			this.layout.setOutputSelection(null);
+			this.editor.clearSelection?.();
+			this.mouseDragActive = false;
+			this.mouseDragRegion = null;
 		}
 
 		if (this.isInitialized) {
@@ -1856,6 +1868,8 @@ export class InteractiveMode {
 		if (this.ui.hasOverlay()) return;
 
 		this.layout.scrollByPage(direction);
+		this.outputSelection = null;
+		this.layout.setOutputSelection(null);
 		this.ui.requestRender();
 	}
 
@@ -1869,17 +1883,238 @@ export class InteractiveMode {
 
 	private handleMouseEvent(event: MouseEvent): void {
 		if (!this.scrollOutputEnabled) return;
-		if (event.type !== "scroll" || !event.direction) return;
 		if (this.ui.hasOverlay()) return;
 
-		const direction = event.direction === "up" ? 1 : -1;
-		if (event.shift || event.alt) {
-			this.layout.scrollByPage(direction);
+		if (event.type === "scroll" && event.direction) {
+			const direction = event.direction === "up" ? 1 : -1;
+			if (event.shift || event.alt) {
+				this.layout.scrollByPage(direction);
+				this.outputSelection = null;
+				this.layout.setOutputSelection(null);
+				return;
+			}
+
+			const scrollStep = 3;
+			this.layout.scrollBy(direction * scrollStep);
+			this.outputSelection = null;
+			this.layout.setOutputSelection(null);
 			return;
 		}
 
-		const scrollStep = 3;
-		this.layout.scrollBy(direction * scrollStep);
+		const resolved = this.resolveMouseRegion(event);
+		if (!resolved) return;
+
+		if (event.type === "press" && event.button === 0) {
+			this.handleMousePress(resolved);
+			return;
+		}
+
+		if (event.type === "move") {
+			this.handleMouseDrag(resolved);
+			return;
+		}
+
+		if (event.type === "release" && event.button === 0) {
+			this.handleMouseRelease(resolved);
+		}
+	}
+
+	private resolveMouseRegion(event: MouseEvent): { region: "output" | "editor"; row: number; col: number } | null {
+		const row = event.y - 1;
+		const col = event.x - 1;
+		if (row < 0 || col < 0) return null;
+
+		const outputHeight = this.layout.getOutputHeight();
+		const height = this.ui.terminal.rows;
+		const width = this.ui.terminal.columns;
+
+		if (row < outputHeight) {
+			return { region: "output", row, col };
+		}
+
+		const fixedHeight = Math.max(0, height - outputHeight);
+		const fixedRow = row - outputHeight;
+		if (fixedRow < 0 || fixedRow >= fixedHeight) return null;
+
+		const editorRange = this.getEditorViewportRange(width, fixedHeight);
+		if (!editorRange) return null;
+		if (fixedRow < editorRange.start || fixedRow >= editorRange.end) return null;
+
+		return { region: "editor", row: fixedRow - editorRange.start, col };
+	}
+
+	private getEditorViewportRange(width: number, fixedHeight: number): { start: number; end: number } | null {
+		const children = this.fixedContainer.children;
+		const childRanges: Array<{ child: Component; start: number; end: number }> = [];
+		let totalLines = 0;
+
+		for (const child of children) {
+			const count = child.render(width).length;
+			childRanges.push({ child, start: totalLines, end: totalLines + count });
+			totalLines += count;
+		}
+
+		if (totalLines === 0) return null;
+
+		const visibleFixedHeight = Math.min(fixedHeight, totalLines);
+		const visibleStart = Math.max(0, totalLines - visibleFixedHeight);
+
+		for (const range of childRanges) {
+			if (range.child !== this.editorContainer) continue;
+			const visibleChildStart = Math.max(range.start, visibleStart);
+			const visibleChildEnd = Math.min(range.end, totalLines);
+			if (visibleChildStart >= visibleChildEnd) return null;
+			return {
+				start: visibleChildStart - visibleStart,
+				end: visibleChildEnd - visibleStart,
+			};
+		}
+
+		return null;
+	}
+
+	private handleMousePress(region: { region: "output" | "editor"; row: number; col: number }): void {
+		this.mouseDragActive = true;
+		this.mouseDragRegion = region.region;
+
+		if (region.region === "output") {
+			this.outputSelection = this.clampOutputSelection({
+				startRow: region.row,
+				startCol: region.col,
+				endRow: region.row,
+				endCol: region.col,
+			});
+			this.layout.setOutputSelection(this.outputSelection);
+			this.editor.clearSelection?.();
+			return;
+		}
+
+		this.outputSelection = null;
+		this.layout.setOutputSelection(null);
+		this.ui.setFocus(this.editor as Component);
+		this.editor.beginMouseSelection?.(region.row, region.col);
+	}
+
+	private handleMouseDrag(region: { region: "output" | "editor"; row: number; col: number }): void {
+		if (!this.mouseDragActive || this.mouseDragRegion !== region.region) return;
+
+		if (region.region === "output") {
+			if (!this.outputSelection) return;
+			this.outputSelection = this.clampOutputSelection({
+				...this.outputSelection,
+				endRow: region.row,
+				endCol: region.col,
+			});
+			this.layout.setOutputSelection(this.outputSelection);
+			return;
+		}
+
+		this.editor.updateMouseSelection?.(region.row, region.col);
+	}
+
+	private handleMouseRelease(region: { region: "output" | "editor"; row: number; col: number }): void {
+		if (!this.mouseDragActive || this.mouseDragRegion !== region.region) return;
+
+		if (region.region === "output") {
+			if (!this.outputSelection) {
+				this.mouseDragActive = false;
+				this.mouseDragRegion = null;
+				return;
+			}
+
+			this.outputSelection = this.clampOutputSelection({
+				...this.outputSelection,
+				endRow: region.row,
+				endCol: region.col,
+			});
+			this.layout.setOutputSelection(this.outputSelection);
+
+			const copied = this.copyOutputSelection();
+			if (copied) {
+				this.showStatus("Copied selection to clipboard");
+			} else {
+				this.outputSelection = null;
+				this.layout.setOutputSelection(null);
+			}
+		} else {
+			const selected = this.editor.endMouseSelection?.(region.row, region.col);
+			if (selected) {
+				copyToClipboard(selected);
+				this.showStatus("Copied selection to clipboard");
+			}
+		}
+
+		this.mouseDragActive = false;
+		this.mouseDragRegion = null;
+	}
+
+	private clampOutputSelection(selection: {
+		startRow: number;
+		startCol: number;
+		endRow: number;
+		endCol: number;
+	}): { startRow: number; startCol: number; endRow: number; endCol: number } | null {
+		const lines = this.layout.getVisibleOutputLines();
+		if (lines.length === 0) return null;
+
+		const clampRow = (row: number): number => clamp(row, 0, lines.length - 1);
+		const clampCol = (row: number, col: number): number => {
+			const width = visibleWidth(lines[row] ?? "");
+			return clamp(col, 0, width);
+		};
+
+		const startRow = clampRow(selection.startRow);
+		const endRow = clampRow(selection.endRow);
+		const startCol = clampCol(startRow, selection.startCol);
+		const endCol = clampCol(endRow, selection.endCol);
+
+		return { startRow, startCol, endRow, endCol };
+	}
+
+	private copyOutputSelection(): boolean {
+		if (!this.outputSelection) return false;
+		const lines = this.layout.getVisibleOutputLines();
+		if (lines.length === 0) return false;
+		const selection = this.normalizeOutputSelection(this.outputSelection);
+		if (!selection) return false;
+
+		const parts: string[] = [];
+		for (let row = selection.startRow; row <= selection.endRow; row++) {
+			const line = lines[row] ?? "";
+			const lineWidth = visibleWidth(line);
+			const startCol = row === selection.startRow ? selection.startCol : 0;
+			const endCol = row === selection.endRow ? selection.endCol : lineWidth;
+			if (startCol >= endCol) {
+				parts.push("");
+				continue;
+			}
+			const segment = sliceByColumn(line, startCol, endCol - startCol, true);
+			parts.push(stripAnsi(segment));
+		}
+
+		const text = parts.join("\n").trimEnd();
+		if (!text) return false;
+		copyToClipboard(text);
+		return true;
+	}
+
+	private normalizeOutputSelection(selection: {
+		startRow: number;
+		startCol: number;
+		endRow: number;
+		endCol: number;
+	}): { startRow: number; startCol: number; endRow: number; endCol: number } | null {
+		const lines = this.layout.getVisibleOutputLines();
+		if (lines.length === 0) return null;
+
+		let { startRow, startCol, endRow, endCol } = selection;
+		if (startRow > endRow || (startRow === endRow && startCol > endCol)) {
+			[startRow, endRow] = [endRow, startRow];
+			[startCol, endCol] = [endCol, startCol];
+		}
+
+		const normalized = this.clampOutputSelection({ startRow, startCol, endRow, endCol });
+		return normalized;
 	}
 
 	private async handleClipboardImagePaste(): Promise<void> {
@@ -1892,7 +2127,7 @@ export class InteractiveMode {
 			// Write to temp file
 			const tmpDir = os.tmpdir();
 			const ext = extensionForImageMimeType(image.mimeType) ?? "png";
-			const fileName = `pi-clipboard-${crypto.randomUUID()}.${ext}`;
+			const fileName = `${APP_NAME}-clipboard-${crypto.randomUUID()}.${ext}`;
 			const filePath = path.join(tmpDir, fileName);
 			fs.writeFileSync(filePath, Buffer.from(image.bytes));
 
@@ -2782,7 +3017,7 @@ export class InteractiveMode {
 		}
 
 		const currentText = this.editor.getExpandedText?.() ?? this.editor.getText();
-		const tmpFile = path.join(os.tmpdir(), `pi-editor-${Date.now()}.pi.md`);
+		const tmpFile = path.join(os.tmpdir(), `${APP_NAME}-editor-${Date.now()}.md`);
 
 		try {
 			// Write current content to temp file

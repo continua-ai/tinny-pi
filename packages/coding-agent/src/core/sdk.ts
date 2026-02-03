@@ -41,7 +41,7 @@ import {
 export interface CreateAgentSessionOptions {
 	/** Working directory for project-local discovery. Default: process.cwd() */
 	cwd?: string;
-	/** Global config directory. Default: ~/.pi/agent */
+	/** Global config directory. Default: ~/.tinny-pi/agent */
 	agentDir?: string;
 
 	/** Auth storage for credentials. Default: new AuthStorage(agentDir/auth.json) */

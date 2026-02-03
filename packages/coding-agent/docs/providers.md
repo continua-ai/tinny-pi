@@ -21,7 +21,7 @@ Use `/login` in interactive mode, then select a provider:
 - Google Gemini CLI
 - Google Antigravity
 
-Use `/logout` to clear credentials. Tokens are stored in `~/.pi/agent/auth.json` and auto-refresh when expired.
+Use `/logout` to clear credentials. Tokens are stored in `~/.tinny-pi/agent/auth.json` and auto-refresh when expired.
 
 ### GitHub Copilot
 
@@ -46,7 +46,7 @@ Set via environment variable:
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
-pi
+tinny-pi
 ```
 
 | Provider | Environment Variable |
@@ -69,7 +69,7 @@ pi
 
 ## Auth File
 
-Store credentials in `~/.pi/agent/auth.json`:
+Store credentials in `~/.tinny-pi/agent/auth.json`:
 
 ```json
 {
@@ -119,7 +119,7 @@ export AWS_REGION=us-west-2
 Also supports ECS task roles (`AWS_CONTAINER_CREDENTIALS_*`) and IRSA (`AWS_WEB_IDENTITY_TOKEN_FILE`).
 
 ```bash
-pi --provider amazon-bedrock --model us.anthropic.claude-sonnet-4-20250514-v1:0
+tinny-pi --provider amazon-bedrock --model us.anthropic.claude-sonnet-4-20250514-v1:0
 ```
 
 ### Google Vertex AI

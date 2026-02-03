@@ -23,8 +23,8 @@ Pi implements the [Agent Skills standard](https://agentskills.io/specification),
 
 Pi loads skills from:
 
-- Global: `~/.pi/agent/skills/`
-- Project: `.pi/skills/`
+- Global: `~/.tinny-pi/agent/skills/`
+- Project: `.tinny-pi/skills/`
 - Packages: `skills/` directories or `pi.skills` entries in `package.json`
 - Settings: `skills` array with files or directories
 - CLI: `--skill <path>` (repeatable, additive even with `--no-skills`)
@@ -48,7 +48,7 @@ To use skills from Claude Code or OpenAI Codex, add their directories to setting
 }
 ```
 
-For project-level Claude Code skills, add to `.pi/settings.json`:
+For project-level Claude Code skills, add to `.tinny-pi/settings.json`:
 
 ```json
 {

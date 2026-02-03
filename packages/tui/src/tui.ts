@@ -156,7 +156,7 @@ export interface OverlayHandle {
 	isHidden(): boolean;
 }
 
-export type MouseEventType = "press" | "release" | "scroll";
+export type MouseEventType = "press" | "release" | "scroll" | "move";
 export type MouseScrollDirection = "up" | "down";
 
 export interface MouseEvent {
@@ -269,7 +269,7 @@ export class TUI extends Container {
 	setMouseReporting(enabled: boolean): void {
 		if (this.mouseReportingEnabled === enabled) return;
 		this.mouseReportingEnabled = enabled;
-		this.terminal.write(enabled ? "\x1b[?1000h\x1b[?1006h" : "\x1b[?1000l\x1b[?1006l");
+		this.terminal.write(enabled ? "\x1b[?1000h\x1b[?1002h\x1b[?1006h" : "\x1b[?1000l\x1b[?1002l\x1b[?1006l");
 	}
 
 	setAlternateScreen(enabled: boolean): void {
@@ -476,6 +476,11 @@ export class TUI extends Container {
 		if ((code & 64) !== 0) {
 			const direction: MouseScrollDirection = (code & 1) === 0 ? "up" : "down";
 			return { type: "scroll", direction, x, y, shift, alt, ctrl };
+		}
+
+		if ((code & 32) !== 0) {
+			const button = code & 3;
+			return { type: "move", button, x, y, shift, alt, ctrl };
 		}
 
 		const button = code & 3;

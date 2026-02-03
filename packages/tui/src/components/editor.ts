@@ -2,10 +2,12 @@ import type { AutocompleteProvider, CombinedAutocompleteProvider } from "../auto
 import { getEditorKeybindings } from "../keybindings.js";
 import { matchesKey } from "../keys.js";
 import { type Component, CURSOR_MARKER, type Focusable, type TUI } from "../tui.js";
-import { getSegmenter, isPunctuationChar, isWhitespaceChar, visibleWidth } from "../utils.js";
+import { getSegmenter, isPunctuationChar, isWhitespaceChar, sliceByColumn, visibleWidth } from "../utils.js";
 import { SelectList, type SelectListTheme } from "./select-list.js";
 
 const segmenter = getSegmenter();
+
+const clamp = (value: number, min: number, max: number): number => Math.max(min, Math.min(value, max));
 
 /**
  * Represents a chunk of text for word-wrap layout.
@@ -137,6 +139,9 @@ interface LayoutLine {
 	text: string;
 	hasCursor: boolean;
 	cursorPos?: number;
+	lineIndex: number;
+	startIndex: number;
+	endIndex: number;
 }
 
 export interface EditorTheme {
@@ -168,6 +173,18 @@ export class Editor implements Component, Focusable {
 
 	// Vertical scrolling support
 	private scrollOffset: number = 0;
+
+	// Mouse selection state
+	private selectionAnchor: { line: number; col: number } | null = null;
+	private selection: { startLine: number; startCol: number; endLine: number; endCol: number } | null = null;
+	private isMouseSelecting = false;
+
+	// Last render metadata for mouse mapping
+	private lastLayoutLines: LayoutLine[] = [];
+	private lastVisibleStart = 0;
+	private lastVisibleCount = 0;
+	private lastLayoutWidth = 0;
+	private lastPaddingX = 0;
 
 	// Border color (can be changed dynamically)
 	public borderColor: (str: string) => string;
@@ -309,6 +326,7 @@ export class Editor implements Component, Focusable {
 		this.setCursorCol(this.state.lines[this.state.cursorLine]?.length || 0);
 		// Reset scroll - render() will adjust to show cursor
 		this.scrollOffset = 0;
+		this.clearSelection();
 
 		if (this.onChange) {
 			this.onChange(this.getText());
@@ -335,6 +353,9 @@ export class Editor implements Component, Focusable {
 
 		// Layout the text
 		const layoutLines = this.layoutText(layoutWidth);
+		this.lastLayoutLines = layoutLines;
+		this.lastLayoutWidth = layoutWidth;
+		this.lastPaddingX = paddingX;
 
 		// Calculate max visible lines: 30% of terminal height, minimum 5 lines
 		const terminalRows = this.tui.terminal.rows;
@@ -357,6 +378,8 @@ export class Editor implements Component, Focusable {
 
 		// Get visible lines slice
 		const visibleLines = layoutLines.slice(this.scrollOffset, this.scrollOffset + maxVisibleLines);
+		this.lastVisibleStart = this.scrollOffset;
+		this.lastVisibleCount = visibleLines.length;
 
 		const result: string[] = [];
 		const leftPadding = " ".repeat(paddingX);
@@ -379,6 +402,7 @@ export class Editor implements Component, Focusable {
 			let displayText = layoutLine.text;
 			let lineVisibleWidth = visibleWidth(layoutLine.text);
 			let cursorInPadding = false;
+			const selectionRange = this.getSelectionRangeForLayoutLine(layoutLine);
 
 			// Add cursor if this line has it
 			if (layoutLine.hasCursor && layoutLine.cursorPos !== undefined) {
@@ -407,6 +431,10 @@ export class Editor implements Component, Focusable {
 						cursorInPadding = true;
 					}
 				}
+			}
+
+			if (selectionRange) {
+				displayText = this.highlightSelection(displayText, selectionRange.startCol, selectionRange.endCol);
 			}
 
 			// Calculate padding based on actual visible width
@@ -442,6 +470,9 @@ export class Editor implements Component, Focusable {
 
 	handleInput(data: string): void {
 		const kb = getEditorKeybindings();
+		if (this.selection) {
+			this.clearSelection();
+		}
 
 		// Handle character jump mode (awaiting next character to jump to)
 		if (this.jumpMode !== null) {
@@ -737,6 +768,9 @@ export class Editor implements Component, Focusable {
 				text: "",
 				hasCursor: true,
 				cursorPos: 0,
+				lineIndex: 0,
+				startIndex: 0,
+				endIndex: 0,
 			});
 			return layoutLines;
 		}
@@ -754,11 +788,17 @@ export class Editor implements Component, Focusable {
 						text: line,
 						hasCursor: true,
 						cursorPos: this.state.cursorCol,
+						lineIndex: i,
+						startIndex: 0,
+						endIndex: line.length,
 					});
 				} else {
 					layoutLines.push({
 						text: line,
 						hasCursor: false,
+						lineIndex: i,
+						startIndex: 0,
+						endIndex: line.length,
 					});
 				}
 			} else {
@@ -802,11 +842,17 @@ export class Editor implements Component, Focusable {
 							text: chunk.text,
 							hasCursor: true,
 							cursorPos: adjustedCursorPos,
+							lineIndex: i,
+							startIndex: chunk.startIndex,
+							endIndex: chunk.endIndex,
 						});
 					} else {
 						layoutLines.push({
 							text: chunk.text,
 							hasCursor: false,
+							lineIndex: i,
+							startIndex: chunk.startIndex,
+							endIndex: chunk.endIndex,
 						});
 					}
 				}
@@ -814,6 +860,175 @@ export class Editor implements Component, Focusable {
 		}
 
 		return layoutLines;
+	}
+
+	clearSelection(): void {
+		this.selectionAnchor = null;
+		this.selection = null;
+		this.isMouseSelecting = false;
+	}
+
+	beginMouseSelection(row: number, col: number): void {
+		if (this.autocompleteState) return;
+		const position = this.resolvePositionFromMouse(row, col);
+		this.state.cursorLine = position.line;
+		this.setCursorCol(position.col);
+		this.selectionAnchor = position;
+		this.selection = null;
+		this.isMouseSelecting = true;
+	}
+
+	updateMouseSelection(row: number, col: number): void {
+		if (!this.isMouseSelecting || !this.selectionAnchor) return;
+		const position = this.resolvePositionFromMouse(row, col);
+		this.state.cursorLine = position.line;
+		this.setCursorCol(position.col);
+		this.selection = this.normalizeSelection(this.selectionAnchor, position);
+	}
+
+	endMouseSelection(row: number, col: number): string | null {
+		if (!this.isMouseSelecting || !this.selectionAnchor) return null;
+		const position = this.resolvePositionFromMouse(row, col);
+		this.state.cursorLine = position.line;
+		this.setCursorCol(position.col);
+		this.selection = this.normalizeSelection(this.selectionAnchor, position);
+		this.isMouseSelecting = false;
+		this.selectionAnchor = null;
+
+		if (!this.selection || this.isSelectionEmpty(this.selection)) {
+			this.selection = null;
+			return null;
+		}
+
+		return this.getSelectedText();
+	}
+
+	getSelectedText(): string | null {
+		if (!this.selection) return null;
+		if (this.isSelectionEmpty(this.selection)) return null;
+		const { startLine, startCol, endLine, endCol } = this.selection;
+		const lines = this.state.lines;
+		const clampedStartLine = clamp(startLine, 0, lines.length - 1);
+		const clampedEndLine = clamp(endLine, 0, lines.length - 1);
+
+		if (clampedStartLine === clampedEndLine) {
+			const line = lines[clampedStartLine] ?? "";
+			return line.slice(clamp(startCol, 0, line.length), clamp(endCol, 0, line.length));
+		}
+
+		const parts: string[] = [];
+		const firstLine = lines[clampedStartLine] ?? "";
+		parts.push(firstLine.slice(clamp(startCol, 0, firstLine.length)));
+
+		for (let i = clampedStartLine + 1; i < clampedEndLine; i++) {
+			parts.push(lines[i] ?? "");
+		}
+
+		const lastLine = lines[clampedEndLine] ?? "";
+		parts.push(lastLine.slice(0, clamp(endCol, 0, lastLine.length)));
+
+		return parts.join("\n");
+	}
+
+	private getSelectionRangeForLayoutLine(layoutLine: LayoutLine): { startCol: number; endCol: number } | null {
+		if (!this.selection) return null;
+		const { startLine, startCol, endLine, endCol } = this.selection;
+		if (layoutLine.lineIndex < startLine || layoutLine.lineIndex > endLine) return null;
+
+		const lineText = this.state.lines[layoutLine.lineIndex] ?? "";
+		const lineLength = lineText.length;
+		const lineStart = layoutLine.lineIndex === startLine ? startCol : 0;
+		const lineEnd = layoutLine.lineIndex === endLine ? endCol : lineLength;
+
+		const overlapStart = Math.max(lineStart, layoutLine.startIndex);
+		const overlapEnd = Math.min(lineEnd, layoutLine.endIndex);
+		if (overlapStart >= overlapEnd) return null;
+
+		return {
+			startCol: overlapStart - layoutLine.startIndex,
+			endCol: overlapEnd - layoutLine.startIndex,
+		};
+	}
+
+	private highlightSelection(text: string, startCol: number, endCol: number): string {
+		const width = visibleWidth(text);
+		const safeStart = clamp(startCol, 0, width);
+		const safeEnd = clamp(endCol, 0, width);
+		if (safeStart >= safeEnd) return text;
+
+		const before = sliceByColumn(text, 0, safeStart, true);
+		const middle = sliceByColumn(text, safeStart, safeEnd - safeStart, true);
+		const after = sliceByColumn(text, safeEnd, width - safeEnd, true);
+		return `${before}\x1b[7m${middle}\x1b[0m${after}`;
+	}
+
+	private resolvePositionFromMouse(row: number, col: number): { line: number; col: number } {
+		if (this.lastLayoutLines.length === 0) {
+			return { line: 0, col: 0 };
+		}
+
+		const contentRow = row - 1; // Skip top border
+		let layoutIndex = this.lastVisibleStart;
+		if (this.lastVisibleCount > 0) {
+			if (contentRow < 0) {
+				layoutIndex = this.lastVisibleStart;
+			} else if (contentRow >= this.lastVisibleCount) {
+				layoutIndex = this.lastVisibleStart + this.lastVisibleCount - 1;
+			} else {
+				layoutIndex = this.lastVisibleStart + contentRow;
+			}
+		}
+
+		layoutIndex = clamp(layoutIndex, 0, this.lastLayoutLines.length - 1);
+		const layoutLine = this.lastLayoutLines[layoutIndex]!;
+
+		const localCol = col - this.lastPaddingX;
+		const clampedCol = clamp(localCol, 0, this.lastLayoutWidth);
+		const textIndex = this.columnToIndex(layoutLine.text, clampedCol);
+		const absoluteCol = layoutLine.startIndex + textIndex;
+
+		return { line: layoutLine.lineIndex, col: absoluteCol };
+	}
+
+	private columnToIndex(text: string, targetCol: number): number {
+		if (targetCol <= 0) return 0;
+		let currentCol = 0;
+		let lastIndex = 0;
+		for (const { segment, index } of segmenter.segment(text)) {
+			const width = visibleWidth(segment);
+			if (currentCol + width > targetCol) {
+				return index;
+			}
+			currentCol += width;
+			lastIndex = index + segment.length;
+		}
+		return lastIndex;
+	}
+
+	private normalizeSelection(
+		anchor: { line: number; col: number },
+		focus: { line: number; col: number },
+	): { startLine: number; startCol: number; endLine: number; endCol: number } {
+		let startLine = anchor.line;
+		let startCol = anchor.col;
+		let endLine = focus.line;
+		let endCol = focus.col;
+
+		if (startLine > endLine || (startLine === endLine && startCol > endCol)) {
+			[startLine, endLine] = [endLine, startLine];
+			[startCol, endCol] = [endCol, startCol];
+		}
+
+		return { startLine, startCol, endLine, endCol };
+	}
+
+	private isSelectionEmpty(selection: {
+		startLine: number;
+		startCol: number;
+		endLine: number;
+		endCol: number;
+	}): boolean {
+		return selection.startLine === selection.endLine && selection.startCol === selection.endCol;
 	}
 
 	getText(): string {

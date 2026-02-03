@@ -1,7 +1,7 @@
 # JSON Event Stream Mode
 
 ```bash
-pi --mode json "Your prompt"
+tinny-pi --mode json "Your prompt"
 ```
 
 Outputs all session events as JSON lines to stdout. Useful for integrating pi into other tools or custom UIs.
@@ -75,5 +75,5 @@ Followed by events as they occur:
 ## Example
 
 ```bash
-pi --mode json "List files" 2>/dev/null | jq -c 'select(.type == "message_end")'
+tinny-pi --mode json "List files" 2>/dev/null | jq -c 'select(.type == "message_end")'
 ```

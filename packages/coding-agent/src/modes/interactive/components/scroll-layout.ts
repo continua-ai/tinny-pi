@@ -1,6 +1,13 @@
-import type { Component, TUI } from "@mariozechner/pi-tui";
+import { type Component, sliceByColumn, type TUI, visibleWidth } from "@mariozechner/pi-tui";
 
 const EMPTY_LINE = "";
+
+type OutputSelection = {
+	startRow: number;
+	startCol: number;
+	endRow: number;
+	endCol: number;
+};
 
 function clamp(value: number, min: number, max: number): number {
 	return Math.max(min, Math.min(value, max));
@@ -15,11 +22,34 @@ export class ScrollLayout implements Component {
 	private lastOutputLineCount = 0;
 	private lastAvailableHeight = 0;
 	private lastMaxScrollOffset = 0;
+	private lastVisibleOutputLines: string[] = [];
+	private lastVisibleFixedLines: string[] = [];
+	private outputSelection: OutputSelection | null = null;
 
 	constructor(tui: TUI, output: Component, fixed: Component) {
 		this.tui = tui;
 		this.output = output;
 		this.fixed = fixed;
+	}
+
+	setOutputSelection(selection: OutputSelection | null): void {
+		this.outputSelection = selection;
+	}
+
+	getOutputSelection(): OutputSelection | null {
+		return this.outputSelection;
+	}
+
+	getOutputHeight(): number {
+		return this.lastAvailableHeight;
+	}
+
+	getVisibleOutputLines(): string[] {
+		return [...this.lastVisibleOutputLines];
+	}
+
+	getVisibleFixedLines(): string[] {
+		return [...this.lastVisibleFixedLines];
 	}
 
 	setEnabled(enabled: boolean): void {
@@ -29,11 +59,13 @@ export class ScrollLayout implements Component {
 		this.lastOutputLineCount = 0;
 		this.lastAvailableHeight = 0;
 		this.lastMaxScrollOffset = 0;
+		this.outputSelection = null;
 	}
 
 	scrollBy(lines: number): void {
 		if (!this.enabled || lines === 0) return;
 		this.scrollOffset = clamp(this.scrollOffset + lines, 0, this.lastMaxScrollOffset);
+		this.outputSelection = null;
 	}
 
 	scrollByPage(pages: number): void {
@@ -44,6 +76,7 @@ export class ScrollLayout implements Component {
 
 	scrollToBottom(): void {
 		this.scrollOffset = 0;
+		this.outputSelection = null;
 	}
 
 	isScrolled(): boolean {
@@ -64,6 +97,8 @@ export class ScrollLayout implements Component {
 			this.lastOutputLineCount = outputLines.length;
 			this.lastAvailableHeight = 0;
 			this.lastMaxScrollOffset = 0;
+			this.lastVisibleOutputLines = [...outputLines];
+			this.lastVisibleFixedLines = [...fixedLines];
 			return [...outputLines, ...fixedLines];
 		}
 
@@ -91,6 +126,55 @@ export class ScrollLayout implements Component {
 			);
 		}
 
-		return [...visibleOutputLines, ...visibleFixedLines];
+		this.lastVisibleOutputLines = [...visibleOutputLines];
+		this.lastVisibleFixedLines = [...visibleFixedLines];
+
+		const highlightedOutput = this.applyOutputSelection(visibleOutputLines);
+		return [...highlightedOutput, ...visibleFixedLines];
+	}
+
+	private applyOutputSelection(lines: string[]): string[] {
+		if (!this.outputSelection) return lines;
+		if (lines.length === 0) return lines;
+		const selection = this.normalizeOutputSelection(this.outputSelection, lines.length);
+		if (!selection) return lines;
+
+		return lines.map((line, index) => {
+			if (index < selection.startRow || index > selection.endRow) {
+				return line;
+			}
+
+			const lineWidth = visibleWidth(line);
+			const startCol = index === selection.startRow ? selection.startCol : 0;
+			const endCol = index === selection.endRow ? selection.endCol : lineWidth;
+			return this.highlightLine(line, startCol, endCol);
+		});
+	}
+
+	private normalizeOutputSelection(selection: OutputSelection, lineCount: number): OutputSelection | null {
+		if (lineCount <= 0) return null;
+		let { startRow, startCol, endRow, endCol } = selection;
+
+		if (startRow > endRow || (startRow === endRow && startCol > endCol)) {
+			[startRow, endRow] = [endRow, startRow];
+			[startCol, endCol] = [endCol, startCol];
+		}
+
+		startRow = clamp(startRow, 0, lineCount - 1);
+		endRow = clamp(endRow, 0, lineCount - 1);
+
+		return { startRow, startCol, endRow, endCol };
+	}
+
+	private highlightLine(line: string, startCol: number, endCol: number): string {
+		const lineWidth = visibleWidth(line);
+		const safeStart = clamp(startCol, 0, lineWidth);
+		const safeEnd = clamp(endCol, 0, lineWidth);
+		if (safeStart >= safeEnd) return line;
+
+		const before = sliceByColumn(line, 0, safeStart, true);
+		const middle = sliceByColumn(line, safeStart, safeEnd - safeStart, true);
+		const after = sliceByColumn(line, safeEnd, lineWidth - safeEnd, true);
+		return `${before}\x1b[7m${middle}\x1b[0m${after}`;
 	}
 }

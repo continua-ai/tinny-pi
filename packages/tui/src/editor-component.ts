@@ -50,6 +50,22 @@ export interface EditorComponent extends Component {
 	getExpandedText?(): string;
 
 	// =========================================================================
+	// Mouse selection (optional)
+	// =========================================================================
+
+	/** Begin a mouse selection at the given visual row/column */
+	beginMouseSelection?(row: number, col: number): void;
+
+	/** Update an in-progress mouse selection */
+	updateMouseSelection?(row: number, col: number): void;
+
+	/** End a mouse selection and return selected text */
+	endMouseSelection?(row: number, col: number): string | null;
+
+	/** Clear any active selection */
+	clearSelection?(): void;
+
+	// =========================================================================
 	// Autocomplete support (optional)
 	// =========================================================================
 

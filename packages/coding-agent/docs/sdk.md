@@ -252,14 +252,14 @@ const { session } = await createAgentSession({
   cwd: process.cwd(), // default
   
   // Global config directory
-  agentDir: "~/.pi/agent", // default (expands ~)
+  agentDir: "~/.tinny-pi/agent", // default (expands ~)
 });
 ```
 
 `cwd` is used by `DefaultResourceLoader` for:
-- Project extensions (`.pi/extensions/`)
-- Project skills (`.pi/skills/`)
-- Project prompts (`.pi/prompts/`)
+- Project extensions (`.tinny-pi/extensions/`)
+- Project skills (`.tinny-pi/skills/`)
+- Project prompts (`.tinny-pi/prompts/`)
 - Context files (`AGENTS.md` walking up from cwd)
 - Session directory naming
 
@@ -328,7 +328,7 @@ API key resolution priority (handled by AuthStorage):
 ```typescript
 import { AuthStorage, ModelRegistry } from "@mariozechner/pi-coding-agent";
 
-// Default: uses ~/.pi/agent/auth.json and ~/.pi/agent/models.json
+// Default: uses ~/.tinny-pi/agent/auth.json and ~/.tinny-pi/agent/models.json
 const authStorage = new AuthStorage();
 const modelRegistry = new ModelRegistry(authStorage);
 
@@ -468,7 +468,7 @@ Custom tools passed via `customTools` are combined with extension-registered too
 
 ### Extensions
 
-Extensions are loaded by the `ResourceLoader`. `DefaultResourceLoader` discovers extensions from `~/.pi/agent/extensions/`, `.pi/extensions/`, and settings.json extension sources.
+Extensions are loaded by the `ResourceLoader`. `DefaultResourceLoader` discovers extensions from `~/.tinny-pi/agent/extensions/`, `.tinny-pi/extensions/`, and settings.json extension sources.
 
 ```typescript
 import { createAgentSession, DefaultResourceLoader } from "@mariozechner/pi-coding-agent";
@@ -695,8 +695,8 @@ const { session } = await createAgentSession({
 **Project-specific settings:**
 
 Settings load from two locations and merge:
-1. Global: `~/.pi/agent/settings.json`
-2. Project: `<cwd>/.pi/settings.json`
+1. Global: `~/.tinny-pi/agent/settings.json`
+2. Project: `<cwd>/.tinny-pi/settings.json`
 
 Project overrides global. Nested objects merge keys. Setters modify global settings by default.
 
@@ -892,7 +892,7 @@ See [RPC documentation](rpc.md) for the JSON protocol.
 For subprocess-based integration without building with the SDK, use the CLI directly:
 
 ```bash
-pi --mode rpc --no-session
+tinny-pi --mode rpc --no-session
 ```
 
 See [RPC documentation](rpc.md) for the JSON protocol.

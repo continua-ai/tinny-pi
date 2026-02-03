@@ -20,29 +20,29 @@ Pi packages bundle extensions, skills, prompt templates, and themes so you can s
 > **Security:** Pi packages run with full system access. Extensions execute arbitrary code, and skills can instruct the model to perform any action including running executables. Review source code before installing third-party packages.
 
 ```bash
-pi install npm:@foo/bar@1.0.0
-pi install git:github.com/user/repo@v1
-pi install https://github.com/user/repo  # raw URLs work too
-pi install /absolute/path/to/package
-pi install ./relative/path/to/package
+tinny-pi install npm:@foo/bar@1.0.0
+tinny-pi install git:github.com/user/repo@v1
+tinny-pi install https://github.com/user/repo  # raw URLs work too
+tinny-pi install /absolute/path/to/package
+tinny-pi install ./relative/path/to/package
 
-pi remove npm:@foo/bar
-pi list    # show installed packages from settings
-pi update  # update all non-pinned packages
+tinny-pi remove npm:@foo/bar
+tinny-pi list    # show installed packages from settings
+tinny-pi update  # update all non-pinned packages
 ```
 
-By default, `install` and `remove` write to global settings (`~/.pi/agent/settings.json`). Use `-l` to write to project settings (`.pi/settings.json`) instead. Project settings can be shared with your team, and pi installs any missing packages automatically on startup.
+By default, `install` and `remove` write to global settings (`~/.tinny-pi/agent/settings.json`). Use `-l` to write to project settings (`.tinny-pi/settings.json`) instead. Project settings can be shared with your team, and pi installs any missing packages automatically on startup.
 
 To try a package without installing it, use `--extension` or `-e`. This installs to a temporary directory for the current run only:
 
 ```bash
-pi -e npm:@foo/bar
-pi -e git:github.com/user/repo
+tinny-pi -e npm:@foo/bar
+tinny-pi -e git:github.com/user/repo
 ```
 
 ## Package Sources
 
-Pi accepts three source types in settings and `pi install`.
+Pi accepts three source types in settings and `tinny-pi install`.
 
 ### npm
 
@@ -51,9 +51,9 @@ npm:@scope/pkg@1.2.3
 npm:pkg
 ```
 
-- Versioned specs are pinned and skipped by `pi update`.
+- Versioned specs are pinned and skipped by `tinny-pi update`.
 - Global installs use `npm install -g`.
-- Project installs go under `.pi/npm/`.
+- Project installs go under `.tinny-pi/npm/`.
 
 ### git
 
@@ -63,8 +63,8 @@ https://github.com/user/repo@v1
 ```
 
 - Raw `https://` URLs work without the `git:` prefix.
-- Refs pin the package and skip `pi update`.
-- Cloned to `~/.pi/agent/git/<host>/<path>` (global) or `.pi/git/<host>/<path>` (project).
+- Refs pin the package and skip `tinny-pi update`.
+- Cloned to `~/.tinny-pi/agent/git/<host>/<path>` (global) or `.tinny-pi/git/<host>/<path>` (project).
 - Runs `npm install` after clone or pull if `package.json` exists.
 
 ### Local Paths
@@ -180,7 +180,7 @@ Filter what a package loads using the object form in settings:
 
 ## Enable and Disable Resources
 
-Use `pi config` to enable or disable extensions, skills, prompt templates, and themes from installed packages and local directories. Works for both global (`~/.pi/agent`) and project (`.pi/`) scopes.
+Use `tinny-pi config` to enable or disable extensions, skills, prompt templates, and themes from installed packages and local directories. Works for both global (`~/.tinny-pi/agent`) and project (`.tinny-pi/`) scopes.
 
 ## Scope and Deduplication
 

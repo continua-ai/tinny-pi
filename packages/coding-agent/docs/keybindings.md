@@ -1,6 +1,6 @@
 # Keybindings
 
-All keyboard shortcuts can be customized via `~/.pi/agent/keybindings.json`. Each action can be bound to one or more keys.
+All keyboard shortcuts can be customized via `~/.tinny-pi/agent/keybindings.json`. Each action can be bound to one or more keys.
 
 ## Key Format
 
@@ -134,7 +134,7 @@ Modifier combinations: `ctrl+shift+x`, `alt+ctrl+x`, `ctrl+shift+alt+x`, etc.
 
 ## Custom Configuration
 
-Create `~/.pi/agent/keybindings.json`:
+Create `~/.tinny-pi/agent/keybindings.json`:
 
 ```json
 {
