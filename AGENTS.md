@@ -49,6 +49,15 @@ When closing issues via commit:
 - If the user approves: create a feature branch, pull PR, rebase on main, apply adjustments, commit, merge into main, push, close PR, and leave a comment in the user's tone
 - You never open PRs yourself. We work in feature branches until everything is according to the user's requirements, then merge into main, and push.
 
+## Continua Fork Guidelines
+- `main` tracks upstream; `continua` carries Continua-specific changes.
+- Keep diffs small, additive, and opt-in by default.
+- Avoid core refactors; prefer new components or wrappers in coding-agent.
+- If TUI changes are necessary, keep them isolated and behind a toggle.
+- Document trade-offs and settings; add migrations when renaming settings.
+- Add tests for new settings/components and keep docs in sync.
+- Keep the top-level README "Continua Edition" section accurate.
+
 ## Tools
 - GitHub CLI for issues/PRs
 - Add package labels to issues/PRs: pkg:agent, pkg:ai, pkg:coding-agent, pkg:mom, pkg:pods, pkg:tui, pkg:web-ui
