@@ -651,7 +651,7 @@ Response:
   "data": {
     "commands": [
       {"name": "session-name", "description": "Set or clear session name", "source": "extension", "path": "/home/user/.pi/agent/extensions/session.ts"},
-      {"name": "fix-tests", "description": "Fix failing tests", "source": "template", "location": "project", "path": "/home/user/myproject/.pi/agent/prompts/fix-tests.md"},
+      {"name": "fix-tests", "description": "Fix failing tests", "source": "prompt", "location": "project", "path": "/home/user/myproject/.pi/agent/prompts/fix-tests.md"},
       {"name": "skill:brave-search", "description": "Web search via Brave API", "source": "skill", "location": "user", "path": "/home/user/.pi/agent/skills/brave-search/SKILL.md"}
     ]
   }
@@ -663,7 +663,7 @@ Each command has:
 - `description`: Human-readable description (optional for extension commands)
 - `source`: What kind of command:
   - `"extension"`: Registered via `pi.registerCommand()` in an extension
-  - `"template"`: Loaded from a prompt template `.md` file
+  - `"prompt"`: Loaded from a prompt template `.md` file
   - `"skill"`: Loaded from a skill directory (name is prefixed with `skill:`)
 - `location`: Where it was loaded from (optional, not present for extensions):
   - `"user"`: User-level (`~/.pi/agent/`)
@@ -916,8 +916,9 @@ If a dialog method includes a `timeout` field, the agent-side will auto-resolve 
 
 Some `ExtensionUIContext` methods are not supported in RPC mode because they require direct TUI access:
 - `custom()` returns `undefined`
-- `setWorkingMessage()`, `setFooter()`, `setHeader()`, `setEditorComponent()` are no-ops
+- `setWorkingMessage()`, `setFooter()`, `setHeader()`, `setEditorComponent()`, `setToolsExpanded()` are no-ops
 - `getEditorText()` returns `""`
+- `getToolsExpanded()` returns `false`
 
 ### Extension UI Requests (stdout)
 

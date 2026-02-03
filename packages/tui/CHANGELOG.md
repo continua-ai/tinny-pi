@@ -2,6 +2,37 @@
 
 ## [Unreleased]
 
+## [0.51.2] - 2026-02-03
+
+### Added
+
+- Added `Terminal.drainInput()` to drain stdin before exit (prevents Kitty key release events leaking over slow SSH)
+
+### Fixed
+
+- Fixed Kitty key release events leaking to parent shell over slow SSH connections by draining stdin for up to 1s ([#1204](https://github.com/badlogic/pi-mono/issues/1204))
+- Fixed legacy newline handling in the editor to preserve previous newline behavior
+- Fixed @ autocomplete to include hidden paths
+- Fixed submit fallback to honor configured keybindings
+
+## [0.51.1] - 2026-02-02
+
+### Added
+
+- Added `PI_DEBUG_REDRAW=1` env var for debugging full redraws (logs triggers to `~/.pi/agent/pi-debug.log`)
+
+### Changed
+
+- Terminal height changes no longer trigger full redraws, reducing flicker on resize
+- `clearOnShrink` now defaults to `false` (use `PI_CLEAR_ON_SHRINK=1` or `setClearOnShrink(true)` to enable)
+
+### Fixed
+
+- Fixed emoji cursor positioning in Input component ([#1183](https://github.com/badlogic/pi-mono/pull/1183) by [@haoqixu](https://github.com/haoqixu))
+
+- Fixed unnecessary full redraws when appending many lines after content had previously shrunk (viewport check now uses actual previous content size instead of stale maximum)
+- Fixed Ctrl+D exit closing the parent SSH session due to stdin buffer race condition ([#1185](https://github.com/badlogic/pi-mono/issues/1185))
+
 ## [0.51.0] - 2026-02-01
 
 ## [0.50.9] - 2026-02-01

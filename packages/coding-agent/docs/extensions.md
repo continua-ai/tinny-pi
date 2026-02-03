@@ -942,6 +942,31 @@ pi.registerCommand("deploy", {
 });
 ```
 
+### pi.getCommands()
+
+Get the slash commands available for invocation via `prompt` in the current session. Includes extension commands, prompt templates, and skill commands.
+The list matches the RPC `get_commands` ordering: extensions first, then templates, then skills.
+
+```typescript
+const commands = pi.getCommands();
+const bySource = commands.filter((command) => command.source === "extension");
+```
+
+Each entry has this shape:
+
+```typescript
+{
+  name: string; // Command name without the leading slash
+  description?: string;
+  source: "extension" | "prompt" | "skill";
+  location?: "user" | "project" | "path"; // For templates and skills
+  path?: string; // Files backing templates, skills, and extensions
+}
+```
+
+Built-in interactive commands (like `/model` and `/settings`) are not included here. They are handled only in interactive
+mode and would not execute if sent via `prompt`.
+
 ### pi.registerMessageRenderer(customType, renderer)
 
 Register a custom TUI renderer for messages with your `customType`. See [Custom UI](#custom-ui).
@@ -1129,6 +1154,8 @@ export default function (pi: ExtensionAPI) {
 ## Custom Tools
 
 Register tools the LLM can call via `pi.registerTool()`. Tools appear in the system prompt and can have custom rendering.
+
+Note: Some models are idiots and include the @ prefix in tool path arguments. Built-in tools strip a leading @ before resolving paths. If your custom tool accepts a path, normalize a leading @ as well.
 
 ### Tool Definition
 
@@ -1523,6 +1550,11 @@ ctx.ui.setTitle("pi - my-project");
 // Editor text
 ctx.ui.setEditorText("Prefill text");
 const current = ctx.ui.getEditorText();
+
+// Tool output expansion
+const wasExpanded = ctx.ui.getToolsExpanded();
+ctx.ui.setToolsExpanded(true);
+ctx.ui.setToolsExpanded(wasExpanded);
 
 // Custom editor (vim mode, emacs mode, etc.)
 ctx.ui.setEditorComponent((tui, theme, keybindings) => new VimEditor(tui, theme, keybindings));

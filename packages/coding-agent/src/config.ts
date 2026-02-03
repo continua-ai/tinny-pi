@@ -21,6 +21,53 @@ export const isBunBinary =
 export const isBunRuntime = !!process.versions.bun;
 
 // =============================================================================
+// Install Method Detection
+// =============================================================================
+
+export type InstallMethod = "bun-binary" | "npm" | "pnpm" | "yarn" | "bun" | "unknown";
+
+export function detectInstallMethod(): InstallMethod {
+	if (isBunBinary) {
+		return "bun-binary";
+	}
+
+	const resolvedPath = `${__dirname}\0${process.execPath || ""}`.toLowerCase();
+
+	if (resolvedPath.includes("/pnpm/") || resolvedPath.includes("/.pnpm/") || resolvedPath.includes("\\pnpm\\")) {
+		return "pnpm";
+	}
+	if (resolvedPath.includes("/yarn/") || resolvedPath.includes("/.yarn/") || resolvedPath.includes("\\yarn\\")) {
+		return "yarn";
+	}
+	if (isBunRuntime) {
+		return "bun";
+	}
+	if (resolvedPath.includes("/npm/") || resolvedPath.includes("/node_modules/") || resolvedPath.includes("\\npm\\")) {
+		return "npm";
+	}
+
+	return "unknown";
+}
+
+export function getUpdateInstruction(packageName: string): string {
+	const method = detectInstallMethod();
+	switch (method) {
+		case "bun-binary":
+			return `Download from: https://github.com/badlogic/pi-mono/releases/latest`;
+		case "pnpm":
+			return `Run: pnpm install -g ${packageName}`;
+		case "yarn":
+			return `Run: yarn global add ${packageName}`;
+		case "bun":
+			return `Run: bun install -g ${packageName}`;
+		case "npm":
+			return `Run: npm install -g ${packageName}`;
+		default:
+			return `Run: npm install -g ${packageName}`;
+	}
+}
+
+// =============================================================================
 // Package Asset Paths (shipped with executable)
 // =============================================================================
 

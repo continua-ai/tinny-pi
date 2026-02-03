@@ -41,6 +41,7 @@ export interface SettingsConfig {
 	editorPaddingX: number;
 	autocompleteMaxVisible: number;
 	quietStartup: boolean;
+	clearOnShrink: boolean;
 }
 
 export interface SettingsCallbacks {
@@ -62,6 +63,7 @@ export interface SettingsCallbacks {
 	onEditorPaddingXChange: (padding: number) => void;
 	onAutocompleteMaxVisibleChange: (maxVisible: number) => void;
 	onQuietStartupChange: (enabled: boolean) => void;
+	onClearOnShrinkChange: (enabled: boolean) => void;
 	onCancel: () => void;
 }
 
@@ -324,6 +326,16 @@ export class SettingsSelectorComponent extends Container {
 			values: ["3", "5", "7", "10", "15", "20"],
 		});
 
+		// Clear on shrink toggle (insert after autocomplete-max-visible)
+		const autocompleteIndex = items.findIndex((item) => item.id === "autocomplete-max-visible");
+		items.splice(autocompleteIndex + 1, 0, {
+			id: "clear-on-shrink",
+			label: "Clear on shrink",
+			description: "Clear empty rows when content shrinks (may cause flicker)",
+			currentValue: config.clearOnShrink ? "true" : "false",
+			values: ["true", "false"],
+		});
+
 		// Add borders
 		this.addChild(new DynamicBorder());
 
@@ -377,6 +389,9 @@ export class SettingsSelectorComponent extends Container {
 						break;
 					case "autocomplete-max-visible":
 						callbacks.onAutocompleteMaxVisibleChange(parseInt(newValue, 10));
+						break;
+					case "clear-on-shrink":
+						callbacks.onClearOnShrinkChange(newValue === "true");
 						break;
 				}
 			},

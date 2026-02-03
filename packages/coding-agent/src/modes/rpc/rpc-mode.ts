@@ -252,6 +252,15 @@ export async function runRpcMode(session: AgentSession): Promise<never> {
 			// Theme switching not supported in RPC mode
 			return { success: false, error: "Theme switching not supported in RPC mode" };
 		},
+
+		getToolsExpanded() {
+			// Tool expansion not supported in RPC mode - no TUI
+			return false;
+		},
+
+		setToolsExpanded(_expanded: boolean) {
+			// Tool expansion not supported in RPC mode - no TUI
+		},
 	});
 
 	// Set up extensions with RPC-based UI context
@@ -276,6 +285,10 @@ export async function runRpcMode(session: AgentSession): Promise<never> {
 					label: options?.label,
 				});
 				return { cancelled: result.cancelled };
+			},
+			switchSession: async (sessionPath) => {
+				const success = await session.switchSession(sessionPath);
+				return { cancelled: !success };
 			},
 		},
 		shutdownHandler: () => {
@@ -530,7 +543,7 @@ export async function runRpcMode(session: AgentSession): Promise<never> {
 					commands.push({
 						name: template.name,
 						description: template.description,
-						source: "template",
+						source: "prompt",
 						location: template.source as RpcSlashCommand["location"],
 						path: template.filePath,
 					});

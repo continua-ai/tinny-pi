@@ -15,6 +15,10 @@ class MockTerminal implements Terminal {
 
 	stop(): void {}
 
+	drainInput(_maxMs?: number, _idleMs?: number): Promise<void> {
+		return Promise.resolve();
+	}
+
 	write(_data: string): void {}
 
 	get columns(): number {

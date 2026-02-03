@@ -106,6 +106,8 @@ export type NavigateTreeHandler = (
 	options?: { summarize?: boolean; customInstructions?: string; replaceInstructions?: boolean; label?: string },
 ) => Promise<{ cancelled: boolean }>;
 
+export type SwitchSessionHandler = (sessionPath: string) => Promise<{ cancelled: boolean }>;
+
 export type ShutdownHandler = () => void;
 
 /**
@@ -144,6 +146,8 @@ const noOpUIContext: ExtensionUIContext = {
 	getAllThemes: () => [],
 	getTheme: () => undefined,
 	setTheme: (_theme: string | Theme) => ({ success: false, error: "UI not available" }),
+	getToolsExpanded: () => false,
+	setToolsExpanded: () => {},
 };
 
 export class ExtensionRunner {
@@ -165,8 +169,10 @@ export class ExtensionRunner {
 	private newSessionHandler: NewSessionHandler = async () => ({ cancelled: false });
 	private forkHandler: ForkHandler = async () => ({ cancelled: false });
 	private navigateTreeHandler: NavigateTreeHandler = async () => ({ cancelled: false });
+	private switchSessionHandler: SwitchSessionHandler = async () => ({ cancelled: false });
 	private shutdownHandler: ShutdownHandler = () => {};
 	private shortcutDiagnostics: ResourceDiagnostic[] = [];
+	private commandDiagnostics: ResourceDiagnostic[] = [];
 
 	constructor(
 		extensions: Extension[],
@@ -194,6 +200,7 @@ export class ExtensionRunner {
 		this.runtime.getActiveTools = actions.getActiveTools;
 		this.runtime.getAllTools = actions.getAllTools;
 		this.runtime.setActiveTools = actions.setActiveTools;
+		this.runtime.getCommands = actions.getCommands;
 		this.runtime.setModel = actions.setModel;
 		this.runtime.getThinkingLevel = actions.getThinkingLevel;
 		this.runtime.setThinkingLevel = actions.setThinkingLevel;
@@ -221,6 +228,7 @@ export class ExtensionRunner {
 			this.newSessionHandler = actions.newSession;
 			this.forkHandler = actions.fork;
 			this.navigateTreeHandler = actions.navigateTree;
+			this.switchSessionHandler = actions.switchSession;
 			return;
 		}
 
@@ -228,6 +236,7 @@ export class ExtensionRunner {
 		this.newSessionHandler = async () => ({ cancelled: false });
 		this.forkHandler = async () => ({ cancelled: false });
 		this.navigateTreeHandler = async () => ({ cancelled: false });
+		this.switchSessionHandler = async () => ({ cancelled: false });
 	}
 
 	setUIContext(uiContext?: ExtensionUIContext): void {
@@ -366,14 +375,29 @@ export class ExtensionRunner {
 		return undefined;
 	}
 
-	getRegisteredCommands(): RegisteredCommand[] {
+	getRegisteredCommands(reserved?: Set<string>): RegisteredCommand[] {
+		this.commandDiagnostics = [];
+
 		const commands: RegisteredCommand[] = [];
 		for (const ext of this.extensions) {
 			for (const command of ext.commands.values()) {
+				if (reserved?.has(command.name)) {
+					const message = `Extension command '${command.name}' from ${ext.path} conflicts with built-in commands. Skipping.`;
+					this.commandDiagnostics.push({ type: "warning", message, path: ext.path });
+					if (!this.hasUI()) {
+						console.warn(message);
+					}
+					continue;
+				}
+
 				commands.push(command);
 			}
 		}
 		return commands;
+	}
+
+	getCommandDiagnostics(): ResourceDiagnostic[] {
+		return this.commandDiagnostics;
 	}
 
 	getRegisteredCommandsWithPaths(): Array<{ command: RegisteredCommand; extensionPath: string }> {
@@ -436,6 +460,7 @@ export class ExtensionRunner {
 			newSession: (options) => this.newSessionHandler(options),
 			fork: (entryId) => this.forkHandler(entryId),
 			navigateTree: (targetId, options) => this.navigateTreeHandler(targetId, options),
+			switchSession: (sessionPath) => this.switchSessionHandler(sessionPath),
 		};
 	}
 

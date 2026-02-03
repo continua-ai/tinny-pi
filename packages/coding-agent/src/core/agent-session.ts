@@ -67,6 +67,7 @@ import { expandPromptTemplate, type PromptTemplate } from "./prompt-templates.js
 import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.js";
 import type { BranchSummaryEntry, CompactionEntry, SessionManager } from "./session-manager.js";
 import type { SettingsManager } from "./settings-manager.js";
+import { BUILTIN_SLASH_COMMANDS, type SlashCommandInfo, type SlashCommandLocation } from "./slash-commands.js";
 import { buildSystemPrompt } from "./system-prompt.js";
 import type { BashOperations } from "./tools/bash.js";
 import { createAllTools } from "./tools/index.js";
@@ -1170,22 +1171,39 @@ export class AgentSession {
 		return this._cycleAvailableModel(direction);
 	}
 
+	private async _getScopedModelsWithApiKey(): Promise<Array<{ model: Model<any>; thinkingLevel: ThinkingLevel }>> {
+		const apiKeysByProvider = new Map<string, string | undefined>();
+		const result: Array<{ model: Model<any>; thinkingLevel: ThinkingLevel }> = [];
+
+		for (const scoped of this._scopedModels) {
+			const provider = scoped.model.provider;
+			let apiKey: string | undefined;
+			if (apiKeysByProvider.has(provider)) {
+				apiKey = apiKeysByProvider.get(provider);
+			} else {
+				apiKey = await this._modelRegistry.getApiKeyForProvider(provider);
+				apiKeysByProvider.set(provider, apiKey);
+			}
+
+			if (apiKey) {
+				result.push(scoped);
+			}
+		}
+
+		return result;
+	}
+
 	private async _cycleScopedModel(direction: "forward" | "backward"): Promise<ModelCycleResult | undefined> {
-		if (this._scopedModels.length <= 1) return undefined;
+		const scopedModels = await this._getScopedModelsWithApiKey();
+		if (scopedModels.length <= 1) return undefined;
 
 		const currentModel = this.model;
-		let currentIndex = this._scopedModels.findIndex((sm) => modelsAreEqual(sm.model, currentModel));
+		let currentIndex = scopedModels.findIndex((sm) => modelsAreEqual(sm.model, currentModel));
 
 		if (currentIndex === -1) currentIndex = 0;
-		const len = this._scopedModels.length;
+		const len = scopedModels.length;
 		const nextIndex = direction === "forward" ? (currentIndex + 1) % len : (currentIndex - 1 + len) % len;
-		const next = this._scopedModels[nextIndex];
-
-		// Validate API key
-		const apiKey = await this._modelRegistry.getApiKey(next.model);
-		if (!apiKey) {
-			throw new Error(`No API key for ${next.model.provider}/${next.model.id}`);
-		}
+		const next = scopedModels[nextIndex];
 
 		// Apply model
 		this.agent.setModel(next.model);
@@ -1758,6 +1776,45 @@ export class AgentSession {
 	}
 
 	private _bindExtensionCore(runner: ExtensionRunner): void {
+		const normalizeLocation = (source: string): SlashCommandLocation | undefined => {
+			if (source === "user" || source === "project" || source === "path") {
+				return source;
+			}
+			return undefined;
+		};
+
+		const reservedBuiltins = new Set(BUILTIN_SLASH_COMMANDS.map((command) => command.name));
+
+		const getCommands = (): SlashCommandInfo[] => {
+			const extensionCommands: SlashCommandInfo[] = runner
+				.getRegisteredCommandsWithPaths()
+				.filter(({ command }) => !reservedBuiltins.has(command.name))
+				.map(({ command, extensionPath }) => ({
+					name: command.name,
+					description: command.description,
+					source: "extension",
+					path: extensionPath,
+				}));
+
+			const templates: SlashCommandInfo[] = this.promptTemplates.map((template) => ({
+				name: template.name,
+				description: template.description,
+				source: "prompt",
+				location: normalizeLocation(template.source),
+				path: template.filePath,
+			}));
+
+			const skills: SlashCommandInfo[] = this._resourceLoader.getSkills().skills.map((skill) => ({
+				name: `skill:${skill.name}`,
+				description: skill.description,
+				source: "skill",
+				location: normalizeLocation(skill.source),
+				path: skill.filePath,
+			}));
+
+			return [...extensionCommands, ...templates, ...skills];
+		};
+
 		runner.bindCore(
 			{
 				sendMessage: (message, options) => {
@@ -1793,6 +1850,7 @@ export class AgentSession {
 				getActiveTools: () => this.getActiveToolNames(),
 				getAllTools: () => this.getAllTools(),
 				setActiveTools: (toolNames) => this.setActiveToolsByName(toolNames),
+				getCommands,
 				setModel: async (model) => {
 					const key = await this.modelRegistry.getApiKey(model);
 					if (!key) return false;

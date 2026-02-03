@@ -23,6 +23,8 @@ Pi packages bundle extensions, skills, prompt templates, and themes so you can s
 pi install npm:@foo/bar@1.0.0
 pi install git:github.com/user/repo@v1
 pi install https://github.com/user/repo  # raw URLs work too
+pi install /absolute/path/to/package
+pi install ./relative/path/to/package
 
 pi remove npm:@foo/bar
 pi list    # show installed packages from settings
@@ -72,7 +74,7 @@ https://github.com/user/repo@v1
 ./relative/path/to/package
 ```
 
-Local paths work in settings but not with `pi install`. If the path is a file, it loads as a single extension. If it is a directory, pi loads resources using package rules.
+Local paths point to files or directories on disk and are added to settings without copying. Relative paths are resolved against the settings file they appear in. If the path is a file, it loads as a single extension. If it is a directory, pi loads resources using package rules.
 
 ## Creating a Pi Package
 
@@ -92,6 +94,27 @@ Add a `pi` manifest to `package.json` or use conventional directories. Include t
 ```
 
 Paths are relative to the package root. Arrays support glob patterns and `!exclusions`.
+
+### Gallery Metadata
+
+The [package gallery](https://shittycodingagent.ai/packages) displays packages tagged with `pi-package`. Add `video` or `image` fields to show a preview:
+
+```json
+{
+  "name": "my-package",
+  "keywords": ["pi-package"],
+  "pi": {
+    "extensions": ["./extensions"],
+    "video": "https://example.com/demo.mp4",
+    "image": "https://example.com/screenshot.png"
+  }
+}
+```
+
+- **video**: MP4 only. On desktop, autoplays on hover. Clicking opens a fullscreen player.
+- **image**: PNG, JPEG, GIF, or WebP. Displayed as a static preview.
+
+If both are set, video takes precedence.
 
 ## Package Structure
 
