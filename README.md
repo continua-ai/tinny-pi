@@ -3,7 +3,7 @@
     <img src="https://shittycodingagent.ai/logo.svg" alt="pi logo" width="128">
   </a>
 </p>
-# Pi Monorepo
+# Tinny Pi (Continua Edition of Pi)
 
 > **Looking for the pi coding agent?** See **[packages/coding-agent](packages/coding-agent)** for installation and usage.
 
@@ -11,7 +11,7 @@ Tools for building AI agents and managing LLM deployments.
 
 ## Continua Edition (tinny-pi)
 
-We love Mario’s minimalist pi. This fork stays close to upstream while we keep pushing on ambitious UI work that may not fit the minimalist mold but can improve usability for some workflows. Expect opt-in toggles and a bias toward upstream compatibility.
+We use Tinny Pi internally at Continua AI. We love Mario’s minimalist pi and stay close to upstream while pushing on ambitious UI work that may not fit the minimalist mold but can improve usability for some workflows. Expect opt-in toggles and a bias toward upstream compatibility.
 
 ### Highlights (so far)
 
