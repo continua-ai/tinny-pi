@@ -15,6 +15,7 @@
 - Added a unified command palette for slash commands, prompts, skills, and block actions.
 - Expanded the block action palette to pick a target block before choosing an action.
 - Added command palette entries and prompt status chips to reflect active block filters.
+- Added output-only scrolling to keep the prompt and footer pinned while scrolling chat history.
 
 ### Changed
 

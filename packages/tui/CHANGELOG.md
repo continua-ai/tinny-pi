@@ -5,6 +5,8 @@
 ### Added
 
 - Added a viewport-aware render hook (`renderViewport`) for TUI components.
+- Added `ScrollLayout` for rendering scrollable content with a fixed bottom region.
+- Added mouse scroll parsing plus `TUI.onScroll` and `Terminal.setMouseTracking` support.
 
 ### Fixed
 

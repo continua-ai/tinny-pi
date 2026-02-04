@@ -15,6 +15,7 @@ export { Image, type ImageOptions, type ImageTheme } from "./components/image.js
 export { Input } from "./components/input.js";
 export { Loader } from "./components/loader.js";
 export { type DefaultTextStyle, Markdown, type MarkdownTheme } from "./components/markdown.js";
+export { ScrollLayout, type ScrollLayoutOptions } from "./components/scroll-layout.js";
 export { type SelectItem, SelectList, type SelectListTheme } from "./components/select-list.js";
 export { type SettingItem, SettingsList, type SettingsListTheme } from "./components/settings-list.js";
 export { Spacer } from "./components/spacer.js";
@@ -45,6 +46,8 @@ export {
 	parseKey,
 	setKittyProtocolActive,
 } from "./keys.js";
+// Mouse input handling
+export { type MouseEvent, type MouseScrollEvent, parseMouseEvent } from "./mouse.js";
 // Input buffering for batch splitting
 export { StdinBuffer, type StdinBufferEventMap, type StdinBufferOptions } from "./stdin-buffer.js";
 // Terminal interface and implementations

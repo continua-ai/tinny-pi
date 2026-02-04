@@ -1,6 +1,7 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
 import type { Terminal as XtermTerminalType } from "@xterm/headless";
+import { ScrollLayout } from "../src/components/scroll-layout.js";
 import { type Component, TUI } from "../src/tui.js";
 import { VirtualTerminal } from "./virtual-terminal.js";
 
@@ -298,6 +299,40 @@ describe("TUI differential rendering", () => {
 		viewport = terminal.getViewport();
 		assert.ok(viewport[0]?.includes("New Line 0"), `New content rendered: ${viewport[0]}`);
 		assert.ok(viewport[1]?.includes("New Line 1"), `New content line 1: ${viewport[1]}`);
+
+		tui.stop();
+	});
+});
+
+describe("ScrollLayout", () => {
+	it("pins fixed content while scrolling output", async () => {
+		const terminal = new VirtualTerminal(20, 6);
+		const tui = new TUI(terminal);
+		const output = new TestComponent();
+		const fixed = new TestComponent();
+		output.lines = ["Line 0", "Line 1", "Line 2", "Line 3", "Line 4", "Line 5"];
+		fixed.lines = ["INPUT", "FOOTER"];
+		const layout = new ScrollLayout(output, fixed, { scrollEnabled: true });
+		tui.addChild(layout);
+
+		tui.start();
+		await terminal.flush();
+
+		let viewport = terminal.getViewport();
+		assert.ok(viewport[0]?.includes("Line 2"), `Expected Line 2 at top, got: ${viewport[0]}`);
+		assert.ok(viewport[3]?.includes("Line 5"), `Expected Line 5 at row 3, got: ${viewport[3]}`);
+		assert.ok(viewport[4]?.includes("INPUT"), `Expected INPUT at row 4, got: ${viewport[4]}`);
+		assert.ok(viewport[5]?.includes("FOOTER"), `Expected FOOTER at row 5, got: ${viewport[5]}`);
+
+		layout.scrollBy(-2);
+		tui.requestRender();
+		await terminal.flush();
+
+		viewport = terminal.getViewport();
+		assert.ok(viewport[0]?.includes("Line 0"), `Expected Line 0 at top, got: ${viewport[0]}`);
+		assert.ok(viewport[3]?.includes("Line 3"), `Expected Line 3 at row 3, got: ${viewport[3]}`);
+		assert.ok(viewport[4]?.includes("INPUT"), `Expected INPUT at row 4, got: ${viewport[4]}`);
+		assert.ok(viewport[5]?.includes("FOOTER"), `Expected FOOTER at row 5, got: ${viewport[5]}`);
 
 		tui.stop();
 	});

@@ -35,8 +35,10 @@ import {
 	fuzzyFilter,
 	Loader,
 	Markdown,
+	type MouseScrollEvent,
 	matchesKey,
 	ProcessTerminal,
+	ScrollLayout,
 	Spacer,
 	Text,
 	TruncatedText,
@@ -178,6 +180,9 @@ export interface InteractiveModeOptions {
 export class InteractiveMode {
 	private session: AgentSession;
 	private ui: TUI;
+	private outputContainer: Container;
+	private fixedContainer: Container;
+	private scrollLayout: ScrollLayout;
 	private chatContainer: Container;
 	private pendingMessagesContainer: Container;
 	private statusContainer: Container;
@@ -227,6 +232,9 @@ export class InteractiveMode {
 	// Block filtering state
 	private blockFilterMode: BlockFilterMode = "all";
 	private blockFilterContainer: Container;
+
+	// Output-only scroll state
+	private scrollOutputOnly = false;
 
 	// Block action palette state
 	private blockActionTargets: BlockActionTarget[] = [];
@@ -315,6 +323,12 @@ export class InteractiveMode {
 		this.version = VERSION;
 		this.ui = new TUI(new ProcessTerminal(), this.settingsManager.getShowHardwareCursor());
 		this.ui.setClearOnShrink(this.settingsManager.getClearOnShrink());
+		this.scrollOutputOnly = this.settingsManager.getScrollOutputOnly();
+		this.outputContainer = new Container();
+		this.fixedContainer = new Container();
+		this.scrollLayout = new ScrollLayout(this.outputContainer, this.fixedContainer, {
+			scrollEnabled: this.scrollOutputOnly,
+		});
 		this.headerContainer = new Container();
 		this.blockFilterContainer = new Container();
 		this.chatContainer = new Container();
@@ -433,8 +447,9 @@ export class InteractiveMode {
 		this.fdPath = await ensureTool("fd");
 		this.setupAutocomplete(this.fdPath);
 
-		// Add header container as first child
-		this.ui.addChild(this.headerContainer);
+		// Add header container as first child in the output area
+		this.outputContainer.addChild(this.headerContainer);
+		this.ui.addChild(this.scrollLayout);
 
 		// Add header with keybindings from config (unless silenced)
 		if (this.options.verbose || !this.settingsManager.getQuietStartup()) {
@@ -509,16 +524,16 @@ export class InteractiveMode {
 		}
 
 		this.updateBlockFilterDisplay();
-		this.ui.addChild(this.blockFilterContainer);
-		this.ui.addChild(this.chatContainer);
-		this.ui.addChild(this.pendingMessagesContainer);
-		this.ui.addChild(this.statusContainer);
+		this.outputContainer.addChild(this.blockFilterContainer);
+		this.outputContainer.addChild(this.chatContainer);
+		this.outputContainer.addChild(this.pendingMessagesContainer);
+		this.outputContainer.addChild(this.statusContainer);
 		this.renderWidgets(); // Initialize with default spacer
-		this.ui.addChild(this.widgetContainerAbove);
-		this.ui.addChild(this.promptStatus);
-		this.ui.addChild(this.editorContainer);
-		this.ui.addChild(this.widgetContainerBelow);
-		this.ui.addChild(this.footer);
+		this.outputContainer.addChild(this.widgetContainerAbove);
+		this.fixedContainer.addChild(this.promptStatus);
+		this.fixedContainer.addChild(this.editorContainer);
+		this.fixedContainer.addChild(this.widgetContainerBelow);
+		this.fixedContainer.addChild(this.footer);
 		this.ui.setFocus(this.editor);
 
 		this.setupKeyHandlers();
@@ -534,6 +549,7 @@ export class InteractiveMode {
 		// Start the UI
 		this.ui.start();
 		this.isInitialized = true;
+		this.applyOutputScrollMode(this.scrollOutputOnly);
 
 		// Set terminal title
 		this.updateTerminalTitle();
@@ -1301,6 +1317,9 @@ export class InteractiveMode {
 	// Maximum total widget lines to prevent viewport overflow
 	private static readonly MAX_WIDGET_LINES = 10;
 
+	// Lines to scroll per mouse wheel tick
+	private static readonly OUTPUT_SCROLL_LINES = 3;
+
 	// Maximum number of block action targets shown in the palette
 	private static readonly MAX_BLOCK_ACTION_TARGETS = 50;
 
@@ -1312,6 +1331,27 @@ export class InteractiveMode {
 		this.renderWidgetContainer(this.widgetContainerAbove, this.extensionWidgetsAbove, true, true);
 		this.renderWidgetContainer(this.widgetContainerBelow, this.extensionWidgetsBelow, false, false);
 		this.ui.requestRender();
+	}
+
+	private applyOutputScrollMode(enabled: boolean, options?: { forceRender?: boolean }): void {
+		this.scrollOutputOnly = enabled;
+		this.scrollLayout.setScrollEnabled(enabled);
+		this.ui.onScroll = enabled ? (event) => this.handleOutputScroll(event) : undefined;
+		if (this.isInitialized) {
+			this.ui.setMouseTracking(enabled);
+		}
+		if (enabled) {
+			this.scrollLayout.scrollToBottom();
+		}
+		if (options?.forceRender) {
+			this.ui.requestRender(true);
+		}
+	}
+
+	private handleOutputScroll(event: MouseScrollEvent): void {
+		if (!this.scrollOutputOnly) return;
+		const delta = event.delta * InteractiveMode.OUTPUT_SCROLL_LINES;
+		this.scrollLayout.scrollBy(delta);
 	}
 
 	private startPromptStatusUpdates(): void {
@@ -1412,19 +1452,19 @@ export class InteractiveMode {
 
 		// Remove current footer from UI
 		if (this.customFooter) {
-			this.ui.removeChild(this.customFooter);
+			this.fixedContainer.removeChild(this.customFooter);
 		} else {
-			this.ui.removeChild(this.footer);
+			this.fixedContainer.removeChild(this.footer);
 		}
 
 		if (factory) {
 			// Create and add custom footer, passing the data provider
 			this.customFooter = factory(this.ui, theme, this.footerDataProvider);
-			this.ui.addChild(this.customFooter);
+			this.fixedContainer.addChild(this.customFooter);
 		} else {
 			// Restore built-in footer
 			this.customFooter = undefined;
-			this.ui.addChild(this.footer);
+			this.fixedContainer.addChild(this.footer);
 		}
 
 		this.ui.requestRender();
@@ -3813,6 +3853,7 @@ export class InteractiveMode {
 					autocompleteMaxVisible: this.settingsManager.getAutocompleteMaxVisible(),
 					quietStartup: this.settingsManager.getQuietStartup(),
 					clearOnShrink: this.settingsManager.getClearOnShrink(),
+					scrollOutputOnly: this.scrollOutputOnly,
 				},
 				{
 					onAutoCompactChange: (enabled) => {
@@ -3904,6 +3945,10 @@ export class InteractiveMode {
 					onClearOnShrinkChange: (enabled) => {
 						this.settingsManager.setClearOnShrink(enabled);
 						this.ui.setClearOnShrink(enabled);
+					},
+					onScrollOutputOnlyChange: (enabled) => {
+						this.settingsManager.setScrollOutputOnly(enabled);
+						this.applyOutputScrollMode(enabled, { forceRender: true });
 					},
 					onCancel: () => {
 						done();
@@ -4542,6 +4587,7 @@ export class InteractiveMode {
 			}
 			this.ui.setShowHardwareCursor(this.settingsManager.getShowHardwareCursor());
 			this.ui.setClearOnShrink(this.settingsManager.getClearOnShrink());
+			this.applyOutputScrollMode(this.settingsManager.getScrollOutputOnly(), { forceRender: true });
 			this.rebuildAutocomplete();
 			const runner = this.session.extensionRunner;
 			if (runner) {

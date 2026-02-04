@@ -42,6 +42,9 @@ export interface Terminal {
 	clearFromCursor(): void; // Clear from cursor to end of screen
 	clearScreen(): void; // Clear entire screen and move cursor to (0,0)
 
+	// Mouse tracking
+	setMouseTracking(enabled: boolean): void; // Enable or disable mouse tracking
+
 	// Title operations
 	setTitle(title: string): void; // Set terminal window title
 }
@@ -57,6 +60,7 @@ export class ProcessTerminal implements Terminal {
 	private stdinBuffer?: StdinBuffer;
 	private stdinDataHandler?: (data: string) => void;
 	private writeLogPath = process.env.PI_TUI_WRITE_LOG || "";
+	private mouseTrackingEnabled = false;
 
 	get kittyProtocolActive(): boolean {
 		return this._kittyProtocolActive;
@@ -196,6 +200,11 @@ export class ProcessTerminal implements Terminal {
 		// Disable bracketed paste mode
 		process.stdout.write("\x1b[?2004l");
 
+		if (this.mouseTrackingEnabled) {
+			process.stdout.write("\x1b[?1000l\x1b[?1006l");
+			this.mouseTrackingEnabled = false;
+		}
+
 		// Disable Kitty keyboard protocol if not already done by drainInput()
 		if (this._kittyProtocolActive) {
 			process.stdout.write("\x1b[<u");
@@ -279,6 +288,17 @@ export class ProcessTerminal implements Terminal {
 
 	clearScreen(): void {
 		process.stdout.write("\x1b[2J\x1b[H"); // Clear screen and move to home (1,1)
+	}
+
+	setMouseTracking(enabled: boolean): void {
+		if (this.mouseTrackingEnabled === enabled) return;
+		this.mouseTrackingEnabled = enabled;
+		if (enabled) {
+			// Enable X10 mouse mode + SGR extended coordinates
+			process.stdout.write("\x1b[?1000h\x1b[?1006h");
+		} else {
+			process.stdout.write("\x1b[?1000l\x1b[?1006l");
+		}
 	}
 
 	setTitle(title: string): void {

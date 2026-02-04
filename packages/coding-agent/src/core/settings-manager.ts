@@ -22,6 +22,7 @@ export interface RetrySettings {
 export interface TerminalSettings {
 	showImages?: boolean; // default: true (only relevant if terminal supports images)
 	clearOnShrink?: boolean; // default: false (clear empty rows when content shrinks)
+	scrollOutputOnly?: boolean; // default: true (keep input/footer pinned while scrolling output)
 }
 
 export interface ImageSettings {
@@ -666,6 +667,19 @@ export class SettingsManager {
 		}
 		this.globalSettings.terminal.clearOnShrink = enabled;
 		this.markModified("terminal", "clearOnShrink");
+		this.save();
+	}
+
+	getScrollOutputOnly(): boolean {
+		return this.settings.terminal?.scrollOutputOnly ?? true;
+	}
+
+	setScrollOutputOnly(enabled: boolean): void {
+		if (!this.globalSettings.terminal) {
+			this.globalSettings.terminal = {};
+		}
+		this.globalSettings.terminal.scrollOutputOnly = enabled;
+		this.markModified("terminal", "scrollOutputOnly");
 		this.save();
 	}
 

@@ -14,6 +14,7 @@ export class VirtualTerminal implements Terminal {
 	private resizeHandler?: () => void;
 	private _columns: number;
 	private _rows: number;
+	private mouseTrackingEnabled = false;
 
 	constructor(columns = 80, rows = 24) {
 		this._columns = columns;
@@ -43,6 +44,10 @@ export class VirtualTerminal implements Terminal {
 	stop(): void {
 		// Disable bracketed paste mode
 		this.xterm.write("\x1b[?2004l");
+		if (this.mouseTrackingEnabled) {
+			this.xterm.write("\x1b[?1000l\x1b[?1006l");
+			this.mouseTrackingEnabled = false;
+		}
 		this.inputHandler = undefined;
 		this.resizeHandler = undefined;
 	}
@@ -93,6 +98,16 @@ export class VirtualTerminal implements Terminal {
 
 	clearScreen(): void {
 		this.xterm.write("\x1b[2J\x1b[H"); // Clear screen and move to home (1,1)
+	}
+
+	setMouseTracking(enabled: boolean): void {
+		if (this.mouseTrackingEnabled === enabled) return;
+		this.mouseTrackingEnabled = enabled;
+		if (enabled) {
+			this.xterm.write("\x1b[?1000h\x1b[?1006h");
+		} else {
+			this.xterm.write("\x1b[?1000l\x1b[?1006l");
+		}
 	}
 
 	setTitle(title: string): void {

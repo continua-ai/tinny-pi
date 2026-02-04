@@ -6,6 +6,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { isKeyRelease, matchesKey } from "./keys.js";
+import { type MouseScrollEvent, parseMouseEvent } from "./mouse.js";
 import type { Terminal } from "./terminal.js";
 import { getCapabilities, isImageLine, setCellDimensions } from "./terminal-image.js";
 import { extractSegments, sliceByColumn, sliceWithWidth, visibleWidth } from "./utils.js";
@@ -258,6 +259,8 @@ export class TUI extends Container {
 
 	/** Global callback for debug key (Shift+Ctrl+D). Called before input is forwarded to focused component. */
 	public onDebug?: () => void;
+	/** Global callback for mouse scroll events. */
+	public onScroll?: (event: MouseScrollEvent) => void;
 	private renderRequested = false;
 	private cursorRow = 0; // Logical cursor row (end of rendered content)
 	private hardwareCursorRow = 0; // Actual terminal cursor row (may differ due to IME positioning)
@@ -265,6 +268,7 @@ export class TUI extends Container {
 	private cellSizeQueryPending = false;
 	private showHardwareCursor = process.env.PI_HARDWARE_CURSOR === "1";
 	private clearOnShrink = process.env.PI_CLEAR_ON_SHRINK === "1"; // Clear empty rows when content shrinks (default: off)
+	private mouseTrackingEnabled = false;
 	private maxLinesRendered = 0; // Track terminal's working area (max lines ever rendered)
 	private previousViewportTop = 0; // Track previous viewport top for resize-aware cursor moves
 	private fullRedrawCount = 0;
@@ -314,6 +318,18 @@ export class TUI extends Container {
 	 */
 	setClearOnShrink(enabled: boolean): void {
 		this.clearOnShrink = enabled;
+	}
+
+	getMouseTracking(): boolean {
+		return this.mouseTrackingEnabled;
+	}
+
+	setMouseTracking(enabled: boolean): void {
+		if (this.mouseTrackingEnabled === enabled) return;
+		this.mouseTrackingEnabled = enabled;
+		if (!this.stopped) {
+			this.terminal.setMouseTracking(enabled);
+		}
 	}
 
 	setFocus(component: Component | null): void {
@@ -428,6 +444,9 @@ export class TUI extends Container {
 			() => this.requestRender(),
 		);
 		this.terminal.hideCursor();
+		if (this.mouseTrackingEnabled) {
+			this.terminal.setMouseTracking(true);
+		}
 		this.queryCellSize();
 		this.requestRender();
 	}
@@ -445,6 +464,9 @@ export class TUI extends Container {
 
 	stop(): void {
 		this.stopped = true;
+		if (this.mouseTrackingEnabled) {
+			this.terminal.setMouseTracking(false);
+		}
 		// Move cursor to the end of the content to prevent overwriting/artifacts on exit
 		if (this.previousLines.length > 0) {
 			const targetRow = this.previousLines.length; // Line after the last content
@@ -485,6 +507,15 @@ export class TUI extends Container {
 			const filtered = this.parseCellSizeResponse();
 			if (filtered.length === 0) return;
 			data = filtered;
+		}
+
+		const mouseEvent = parseMouseEvent(data);
+		if (mouseEvent) {
+			if (this.onScroll) {
+				this.onScroll(mouseEvent);
+				this.requestRender();
+			}
+			return;
 		}
 
 		// Global debug key handler (Shift+Ctrl+D)

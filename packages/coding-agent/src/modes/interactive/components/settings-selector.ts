@@ -41,6 +41,7 @@ export interface SettingsConfig {
 	autocompleteMaxVisible: number;
 	quietStartup: boolean;
 	clearOnShrink: boolean;
+	scrollOutputOnly?: boolean;
 }
 
 export interface SettingsCallbacks {
@@ -62,6 +63,7 @@ export interface SettingsCallbacks {
 	onAutocompleteMaxVisibleChange: (maxVisible: number) => void;
 	onQuietStartupChange: (enabled: boolean) => void;
 	onClearOnShrinkChange: (enabled: boolean) => void;
+	onScrollOutputOnlyChange?: (enabled: boolean) => void;
 	onCancel: () => void;
 }
 
@@ -324,6 +326,17 @@ export class SettingsSelectorComponent extends Container {
 			values: ["true", "false"],
 		});
 
+		// Output-only scroll toggle (insert after clear-on-shrink)
+		const clearOnShrinkIndex = items.findIndex((item) => item.id === "clear-on-shrink");
+		const scrollOutputOnly = config.scrollOutputOnly ?? true;
+		items.splice(clearOnShrinkIndex + 1, 0, {
+			id: "scroll-output-only",
+			label: "Scroll output only",
+			description: "Keep input and footer pinned while scrolling output",
+			currentValue: scrollOutputOnly ? "true" : "false",
+			values: ["true", "false"],
+		});
+
 		// Add borders
 		this.addChild(new DynamicBorder());
 
@@ -377,6 +390,9 @@ export class SettingsSelectorComponent extends Container {
 						break;
 					case "clear-on-shrink":
 						callbacks.onClearOnShrinkChange(newValue === "true");
+						break;
+					case "scroll-output-only":
+						callbacks.onScrollOutputOnlyChange?.(newValue === "true");
 						break;
 				}
 			},
