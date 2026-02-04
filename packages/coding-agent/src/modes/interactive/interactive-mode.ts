@@ -1916,6 +1916,7 @@ export class InteractiveMode {
 		this.defaultEditor.onAction("newSession", () => this.handleClearCommand());
 		this.defaultEditor.onAction("tree", () => this.showTreeSelector());
 		this.defaultEditor.onAction("fork", () => this.showUserMessageSelector());
+		this.defaultEditor.onAction("resume", () => this.showSessionSelector());
 
 		this.defaultEditor.onChange = (text: string) => {
 			const wasBashMode = this.isBashMode;
@@ -2973,9 +2974,9 @@ export class InteractiveMode {
 			case "custom": {
 				if (message.display) {
 					const renderer = this.session.extensionRunner?.getMessageRenderer(message.customType);
-					this.chatContainer.addChild(
-						new CustomMessageComponent(message, renderer, this.getMarkdownThemeWithSettings()),
-					);
+					const component = new CustomMessageComponent(message, renderer, this.getMarkdownThemeWithSettings());
+					component.setExpanded(this.toolOutputExpanded);
+					this.chatContainer.addChild(component);
 				}
 				break;
 			}
@@ -4525,6 +4526,22 @@ export class InteractiveMode {
 		try {
 			await this.session.reload();
 			setRegisteredThemes(this.session.resourceLoader.getThemes().themes);
+			this.hideThinkingBlock = this.settingsManager.getHideThinkingBlock();
+			const themeName = this.settingsManager.getTheme();
+			const themeResult = themeName ? setTheme(themeName, true) : { success: true };
+			if (!themeResult.success) {
+				this.showError(`Failed to load theme "${themeName}": ${themeResult.error}\nFell back to dark theme.`);
+			}
+			const editorPaddingX = this.settingsManager.getEditorPaddingX();
+			const autocompleteMaxVisible = this.settingsManager.getAutocompleteMaxVisible();
+			this.defaultEditor.setPaddingX(editorPaddingX);
+			this.defaultEditor.setAutocompleteMaxVisible(autocompleteMaxVisible);
+			if (this.editor !== this.defaultEditor) {
+				this.editor.setPaddingX?.(editorPaddingX);
+				this.editor.setAutocompleteMaxVisible?.(autocompleteMaxVisible);
+			}
+			this.ui.setShowHardwareCursor(this.settingsManager.getShowHardwareCursor());
+			this.ui.setClearOnShrink(this.settingsManager.getClearOnShrink());
 			this.rebuildAutocomplete();
 			const runner = this.session.extensionRunner;
 			if (runner) {

@@ -792,7 +792,11 @@ export class SessionManager {
 		if (!this.persist || !this.sessionFile) return;
 
 		const hasAssistant = this.fileEntries.some((e) => e.type === "message" && e.message.role === "assistant");
-		if (!hasAssistant) return;
+		if (!hasAssistant) {
+			// Mark as not flushed so when assistant arrives, all entries get written
+			this.flushed = false;
+			return;
+		}
 
 		if (!this.flushed) {
 			for (const e of this.fileEntries) {
@@ -1150,6 +1154,7 @@ export class SessionManager {
 	 * Returns the new session file path, or undefined if not persisting.
 	 */
 	createBranchedSession(leafId: string): string | undefined {
+		const previousSessionFile = this.sessionFile;
 		const path = this.getBranch(leafId);
 		if (path.length === 0) {
 			throw new Error(`Entry ${leafId} not found`);
@@ -1169,7 +1174,7 @@ export class SessionManager {
 			id: newSessionId,
 			timestamp,
 			cwd: this.cwd,
-			parentSession: this.persist ? this.sessionFile : undefined,
+			parentSession: this.persist ? previousSessionFile : undefined,
 		};
 
 		// Collect labels for entries in the path
@@ -1206,6 +1211,8 @@ export class SessionManager {
 			}
 			this.fileEntries = [header, ...pathWithoutLabels, ...labelEntries];
 			this.sessionId = newSessionId;
+			this.sessionFile = newSessionFile;
+			this.flushed = true;
 			this._buildIndex();
 			return newSessionFile;
 		}

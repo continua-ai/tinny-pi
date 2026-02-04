@@ -1982,6 +1982,7 @@ export class AgentSession {
 	async reload(): Promise<void> {
 		const previousFlagValues = this._extensionRunner?.getFlagValues();
 		await this._extensionRunner?.emit({ type: "session_shutdown" });
+		this.settingsManager.reload();
 		resetApiProviders();
 		await this._resourceLoader.reload();
 		this._buildRuntime({
@@ -2370,7 +2371,7 @@ export class AgentSession {
 		this._pendingNextTurnMessages = [];
 
 		if (!selectedEntry.parentId) {
-			this.sessionManager.newSession();
+			this.sessionManager.newSession({ parentSession: previousSessionFile });
 		} else {
 			this.sessionManager.createBranchedSession(selectedEntry.parentId);
 		}
