@@ -50,6 +50,11 @@ When closing issues via commit:
 - Agents may open PRs when requested; prefer PRs for all changes.
 - Continua workflow: see docs/continua-workflow.md.
 
+## Git Remotes (Continua)
+- `origin` points at upstream `badlogic/pi-mono` and is fetch-only.
+- Always push branches to `tinny` (or `fork` when explicitly asked).
+- Never push to `origin` or `continua` unless explicitly instructed.
+
 ## Tools
 - GitHub CLI for issues/PRs
 - Add package labels to issues/PRs: pkg:agent, pkg:ai, pkg:coding-agent, pkg:mom, pkg:pods, pkg:tui, pkg:web-ui

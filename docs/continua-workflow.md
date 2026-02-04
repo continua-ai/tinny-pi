@@ -12,6 +12,7 @@ This document captures how we keep `continua-ai/tinny-pi` clean and easy to sync
 - All changes to `main` must go through a pull request.
 - Agents may open PRs when asked; prefer PRs even for small changes.
 - Do not push directly to `main` or bypass branch protections.
+- Push branches to the `tinny` remote; `origin` is upstream (`badlogic/pi-mono`) and must remain fetch-only.
 
 ## Changelog policy
 
