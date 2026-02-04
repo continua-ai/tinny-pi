@@ -7,6 +7,12 @@ This document captures how we keep `continua-ai/tinny-pi` clean and easy to sync
 - **Always sync upstream first.** Merge/rebase `upstream/main` into the working branch before making local changes.
 - If a sync is in progress, **do not touch changelogs** until the sync completes.
 
+## PR policy
+
+- All changes to `main` must go through a pull request.
+- Agents may open PRs when asked; prefer PRs even for small changes.
+- Do not push directly to `main` or bypass branch protections.
+
 ## Changelog policy
 
 - Update `packages/*/CHANGELOG.md` only **after** the upstream sync.
