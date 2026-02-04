@@ -48,6 +48,7 @@ When closing issues via commit:
 - Analyze PRs without pulling locally first
 - If the user approves: create a feature branch, pull PR, rebase on main, apply adjustments, commit, merge into main, push, close PR, and leave a comment in the user's tone
 - You never open PRs yourself. We work in feature branches until everything is according to the user's requirements, then merge into main, and push.
+- Continua workflow: see docs/continua-workflow.md.
 
 ## Tools
 - GitHub CLI for issues/PRs
