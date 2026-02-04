@@ -98,6 +98,10 @@ Modifier combinations: `ctrl+shift+x`, `alt+ctrl+x`, `ctrl+shift+alt+x`, etc.
 | Action | Default | Description |
 |--------|---------|-------------|
 | `expandTools` | `ctrl+o` | Collapse/expand tool output |
+| `toggleBlocks` | `shift+ctrl+o` | Collapse/expand message blocks |
+| `cycleBlockFilter` | `shift+ctrl+f` | Cycle block filters (all/no-tools/messages) |
+| `blockActions` | `shift+ctrl+a` | Open block action palette |
+| `commandPalette` | `shift+ctrl+k` | Open command palette |
 | `toggleThinking` | `ctrl+t` | Collapse/expand thinking blocks |
 
 ### Message Queue

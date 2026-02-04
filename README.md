@@ -19,6 +19,11 @@
 
 Tools for building AI agents and managing LLM deployments.
 
+## Continua Edition (tinny-pi)
+
+This fork tracks upstream `badlogic/pi-mono` with Continua-specific changes that are opt-in where possible.
+Tested only on macOS with Ghostty.
+
 ## Packages
 
 | Package | Description |

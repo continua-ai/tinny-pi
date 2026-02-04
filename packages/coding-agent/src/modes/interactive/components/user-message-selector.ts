@@ -79,13 +79,17 @@ class UserMessageList implements Component {
 
 	handleInput(keyData: string): void {
 		const kb = getEditorKeybindings();
-		// Up arrow - go to previous (older) message, wrap to bottom when at top
+		// Up arrow - go to previous (older) message, clamp at top
 		if (kb.matches(keyData, "selectUp")) {
-			this.selectedIndex = this.selectedIndex === 0 ? this.messages.length - 1 : this.selectedIndex - 1;
+			if (this.selectedIndex > 0) {
+				this.selectedIndex -= 1;
+			}
 		}
-		// Down arrow - go to next (newer) message, wrap to top when at bottom
+		// Down arrow - go to next (newer) message, clamp at bottom
 		else if (kb.matches(keyData, "selectDown")) {
-			this.selectedIndex = this.selectedIndex === this.messages.length - 1 ? 0 : this.selectedIndex + 1;
+			if (this.selectedIndex < this.messages.length - 1) {
+				this.selectedIndex += 1;
+			}
 		}
 		// Enter - select message and branch
 		else if (kb.matches(keyData, "selectConfirm")) {

@@ -8,8 +8,11 @@ import {
 	imageFallback,
 	Spacer,
 	Text,
+	TruncatedText,
 	type TUI,
 	truncateToWidth,
+	type ViewportInfo,
+	type ViewportRenderResult,
 } from "@mariozechner/pi-tui";
 import stripAnsi from "strip-ansi";
 import type { ToolDefinition } from "../../../core/extensions/types.js";
@@ -21,6 +24,7 @@ import { sanitizeBinaryOutput } from "../../../utils/shell.js";
 import { getLanguageFromPath, highlightCode, theme } from "../theme/theme.js";
 import { renderDiff } from "./diff.js";
 import { keyHint } from "./keybinding-hints.js";
+import { applyStickyHeader } from "./sticky-header.js";
 import { truncateToVisualLines } from "./visual-truncate.js";
 
 // Preview line limit for bash when not expanded
@@ -46,6 +50,7 @@ function replaceTabs(text: string): string {
 
 export interface ToolExecutionOptions {
 	showImages?: boolean; // default: true (only used if terminal supports images)
+	step?: number;
 }
 
 /**
@@ -54,10 +59,13 @@ export interface ToolExecutionOptions {
 export class ToolExecutionComponent extends Container {
 	private contentBox: Box; // Used for custom tools and bash visual truncation
 	private contentText: Text; // For built-in tools (with its own padding/bg)
+	private stepContainer: Container;
+	private stepBox: Box;
 	private imageComponents: Image[] = [];
 	private imageSpacers: Spacer[] = [];
 	private toolName: string;
 	private args: any;
+	private step?: number;
 	private expanded = false;
 	private showImages: boolean;
 	private isPartial = true;
@@ -86,12 +94,17 @@ export class ToolExecutionComponent extends Container {
 		super();
 		this.toolName = toolName;
 		this.args = args;
+		this.step = options.step;
 		this.showImages = options.showImages ?? true;
 		this.toolDefinition = toolDefinition;
 		this.ui = ui;
 		this.cwd = cwd;
 
 		this.addChild(new Spacer(1));
+
+		this.stepContainer = new Container();
+		this.stepBox = new Box(1, 0, (text: string) => theme.bg("toolPendingBg", text));
+		this.addChild(this.stepContainer);
 
 		// Always create both - contentBox for custom tools/bash, contentText for other built-ins
 		this.contentBox = new Box(1, 1, (text: string) => theme.bg("toolPendingBg", text));
@@ -226,6 +239,12 @@ export class ToolExecutionComponent extends Container {
 		this.updateDisplay();
 	}
 
+	renderViewport(width: number, viewport: ViewportInfo): ViewportRenderResult {
+		const result = super.renderViewport(width, viewport);
+		const lines = applyStickyHeader(result.lines, viewport.top, { scanLimit: 24, viewportHeight: viewport.height });
+		return { lines, contentHeight: result.contentHeight };
+	}
+
 	private updateDisplay(): void {
 		// Set background based on state
 		const bgFn = this.isPartial
@@ -233,6 +252,14 @@ export class ToolExecutionComponent extends Container {
 			: this.result?.isError
 				? (text: string) => theme.bg("toolErrorBg", text)
 				: (text: string) => theme.bg("toolSuccessBg", text);
+
+		this.stepContainer.clear();
+		if (this.step !== undefined) {
+			this.stepBox.setBgFn(bgFn);
+			this.stepBox.clear();
+			this.stepBox.addChild(new TruncatedText(this.formatStepCardText(), 0, 0));
+			this.stepContainer.addChild(this.stepBox);
+		}
 
 		// Use built-in rendering for built-in tools (or overrides without custom renderers)
 		if (this.shouldUseBuiltInRenderer()) {
@@ -307,10 +334,11 @@ export class ToolExecutionComponent extends Container {
 		if (this.result) {
 			const imageBlocks = this.result.content?.filter((c: any) => c.type === "image") || [];
 			const caps = getCapabilities();
+			const canRenderImages = !!caps.images && this.showImages && this.expanded;
 
 			for (let i = 0; i < imageBlocks.length; i++) {
 				const img = imageBlocks[i];
-				if (caps.images && this.showImages && img.data && img.mimeType) {
+				if (canRenderImages && img.data && img.mimeType) {
 					// Use converted PNG for Kitty protocol if available
 					const converted = this.convertedImages.get(i);
 					const imageData = converted?.data ?? img.data;
@@ -335,6 +363,74 @@ export class ToolExecutionComponent extends Container {
 				}
 			}
 		}
+	}
+
+	private formatStepCardText(): string {
+		if (this.step === undefined) return "";
+		const summary = this.formatStepSummary();
+		return `${theme.fg("muted", `Step ${this.step}`)}${theme.fg("muted", " • ")}${summary}`;
+	}
+
+	private formatStepSummary(): string {
+		if (this.toolName === "read") {
+			const rawPath = this.args?.file_path || this.args?.path || "";
+			const path = rawPath ? shortenPath(String(rawPath)) : "";
+			const offset = this.args?.offset as number | undefined;
+			const limit = this.args?.limit as number | undefined;
+
+			let pathDisplay = path ? theme.fg("accent", path) : theme.fg("toolOutput", "...");
+			if (offset !== undefined || limit !== undefined) {
+				const startLine = offset ?? 1;
+				const endLine = limit !== undefined ? startLine + limit - 1 : "";
+				pathDisplay += theme.fg("warning", `:${startLine}${endLine ? `-${endLine}` : ""}`);
+			}
+
+			return `${theme.fg("toolTitle", "Read")} ${pathDisplay}`;
+		}
+
+		if (this.toolName === "write") {
+			const rawPath = this.args?.file_path || this.args?.path || "";
+			const path = rawPath ? shortenPath(String(rawPath)) : "";
+			const pathDisplay = path ? theme.fg("accent", path) : theme.fg("toolOutput", "...");
+			return `${theme.fg("toolTitle", "Write")} ${pathDisplay}`;
+		}
+
+		if (this.toolName === "edit") {
+			const rawPath = this.args?.file_path || this.args?.path || "";
+			const path = rawPath ? shortenPath(String(rawPath)) : "";
+			const pathDisplay = path ? theme.fg("accent", path) : theme.fg("toolOutput", "...");
+			return `${theme.fg("toolTitle", "Edit")} ${pathDisplay}`;
+		}
+
+		if (this.toolName === "bash") {
+			const rawCommand = String(this.args?.command || "")
+				.replace(/\s+/g, " ")
+				.trim();
+			const command = rawCommand.length > 60 ? `${rawCommand.slice(0, 57)}...` : rawCommand;
+			return `${theme.fg("toolTitle", "Run")} ${theme.fg("toolOutput", command || "...")}`;
+		}
+
+		if (this.toolName === "ls") {
+			const path = shortenPath(String(this.args?.path || "."));
+			return `${theme.fg("toolTitle", "List")} ${theme.fg("accent", path)}`;
+		}
+
+		if (this.toolName === "find") {
+			const pattern = String(this.args?.pattern || "");
+			const path = shortenPath(String(this.args?.path || "."));
+			const patternText = pattern ? theme.fg("accent", pattern) : theme.fg("toolOutput", "...");
+			return `${theme.fg("toolTitle", "Find")} ${patternText} ${theme.fg("muted", "in")} ${theme.fg("accent", path)}`;
+		}
+
+		if (this.toolName === "grep") {
+			const pattern = String(this.args?.pattern || "");
+			const path = shortenPath(String(this.args?.path || "."));
+			const patternText = pattern ? theme.fg("accent", `/${pattern}/`) : theme.fg("toolOutput", "...");
+			return `${theme.fg("toolTitle", "Grep")} ${patternText} ${theme.fg("muted", "in")} ${theme.fg("accent", path)}`;
+		}
+
+		const toolLabel = theme.fg("toolTitle", this.toolName);
+		return `${theme.fg("toolTitle", "Run")} ${toolLabel}`;
 	}
 
 	/**
@@ -435,7 +531,8 @@ export class ToolExecutionComponent extends Container {
 			.join("\n");
 
 		const caps = getCapabilities();
-		if (imageBlocks.length > 0 && (!caps.images || !this.showImages)) {
+		const canRenderImages = !!caps.images && this.showImages && this.expanded;
+		if (imageBlocks.length > 0 && !canRenderImages) {
 			const imageIndicators = imageBlocks
 				.map((img: any) => {
 					const dims = img.data ? (getImageDimensions(img.data, img.mimeType) ?? undefined) : undefined;

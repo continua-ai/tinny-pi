@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added a viewport-aware render hook (`renderViewport`) for TUI components.
+
+### Fixed
+
+- Fixed SelectList and SettingsList navigation wrapping at the top/bottom to avoid jumpy scrolling at limits.
+
 ## [0.51.4] - 2026-02-03
 
 ### Fixed

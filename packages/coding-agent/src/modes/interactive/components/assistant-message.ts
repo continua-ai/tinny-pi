@@ -1,6 +1,16 @@
-import type { AssistantMessage } from "@mariozechner/pi-ai";
-import { Container, Markdown, type MarkdownTheme, Spacer, Text } from "@mariozechner/pi-tui";
+import type { AssistantMessage, TextContent, ThinkingContent } from "@mariozechner/pi-ai";
+import {
+	Container,
+	Markdown,
+	type MarkdownTheme,
+	Spacer,
+	Text,
+	TruncatedText,
+	type ViewportInfo,
+	type ViewportRenderResult,
+} from "@mariozechner/pi-tui";
 import { getMarkdownTheme, theme } from "../theme/theme.js";
+import { applyStickyHeader } from "./sticky-header.js";
 
 /**
  * Component that renders a complete assistant message
@@ -10,6 +20,7 @@ export class AssistantMessageComponent extends Container {
 	private hideThinkingBlock: boolean;
 	private markdownTheme: MarkdownTheme;
 	private lastMessage?: AssistantMessage;
+	private collapsed = false;
 
 	constructor(
 		message?: AssistantMessage,
@@ -37,8 +48,74 @@ export class AssistantMessageComponent extends Container {
 		}
 	}
 
+	renderViewport(width: number, viewport: ViewportInfo): ViewportRenderResult {
+		const result = this.contentContainer.renderViewport(width, viewport);
+		const lines = applyStickyHeader(result.lines, viewport.top, { headerIndex: 1, viewportHeight: viewport.height });
+		return { lines, contentHeight: result.contentHeight };
+	}
+
 	setHideThinkingBlock(hide: boolean): void {
 		this.hideThinkingBlock = hide;
+	}
+
+	setCollapsed(collapsed: boolean): void {
+		if (this.collapsed === collapsed) return;
+		this.collapsed = collapsed;
+		if (this.lastMessage) {
+			this.updateContent(this.lastMessage);
+		}
+	}
+
+	private getHeaderText(message: AssistantMessage): string {
+		const label = theme.fg("muted", theme.bold("Assistant"));
+		const model = message.model ? theme.fg("dim", ` • ${message.model}`) : "";
+		return `${label}${model}`;
+	}
+
+	private formatPreviewText(text: string): string {
+		const trimmed = text.trim();
+		if (!trimmed) return "";
+		const firstLine = trimmed.split(/\r?\n/)[0] ?? "";
+		return firstLine.replace(/\s+/g, " ").trim();
+	}
+
+	private getPreviewText(message: AssistantMessage): string {
+		const textContent = message.content.find((c): c is TextContent => c.type === "text" && c.text.trim().length > 0);
+		if (textContent) {
+			return this.formatPreviewText(textContent.text);
+		}
+
+		const thinkingContent = message.content.find(
+			(c): c is ThinkingContent => c.type === "thinking" && c.thinking.trim().length > 0,
+		);
+		if (thinkingContent) {
+			return this.hideThinkingBlock ? "Thinking..." : this.formatPreviewText(thinkingContent.thinking);
+		}
+
+		const toolCalls = message.content.filter((c) => c.type === "toolCall").length;
+		if (toolCalls > 0) {
+			return toolCalls === 1 ? "Tool call" : `${toolCalls} tool calls`;
+		}
+
+		return "";
+	}
+
+	private getStopErrorMessage(message: AssistantMessage): string | undefined {
+		const hasToolCalls = message.content.some((c) => c.type === "toolCall");
+		if (hasToolCalls) return undefined;
+
+		if (message.stopReason === "aborted") {
+			return message.errorMessage && message.errorMessage !== "Request was aborted"
+				? message.errorMessage
+				: "Operation aborted";
+		}
+
+		if (message.stopReason === "error") {
+			const errorMsg = message.errorMessage || "Unknown error";
+			return `Error: ${errorMsg}`;
+		}
+
+		return undefined;
 	}
 
 	updateContent(message: AssistantMessage): void {
@@ -46,6 +123,25 @@ export class AssistantMessageComponent extends Container {
 
 		// Clear content container
 		this.contentContainer.clear();
+
+		this.contentContainer.addChild(new Spacer(1));
+		this.contentContainer.addChild(new TruncatedText(this.getHeaderText(message), 1, 0));
+
+		const errorMessage = this.getStopErrorMessage(message);
+
+		if (this.collapsed) {
+			const previewText = this.getPreviewText(message);
+			if (previewText || errorMessage) {
+				this.contentContainer.addChild(new Spacer(1));
+			}
+			if (previewText) {
+				this.contentContainer.addChild(new TruncatedText(theme.fg("muted", previewText), 1, 0));
+			}
+			if (errorMessage) {
+				this.contentContainer.addChild(new Text(theme.fg("error", errorMessage), 1, 0));
+			}
+			return;
+		}
 
 		const hasVisibleContent = message.content.some(
 			(c) => (c.type === "text" && c.text.trim()) || (c.type === "thinking" && c.thinking.trim()),
@@ -85,26 +181,9 @@ export class AssistantMessageComponent extends Container {
 			}
 		}
 
-		// Check if aborted - show after partial content
-		// But only if there are no tool calls (tool execution components will show the error)
-		const hasToolCalls = message.content.some((c) => c.type === "toolCall");
-		if (!hasToolCalls) {
-			if (message.stopReason === "aborted") {
-				const abortMessage =
-					message.errorMessage && message.errorMessage !== "Request was aborted"
-						? message.errorMessage
-						: "Operation aborted";
-				if (hasVisibleContent) {
-					this.contentContainer.addChild(new Spacer(1));
-				} else {
-					this.contentContainer.addChild(new Spacer(1));
-				}
-				this.contentContainer.addChild(new Text(theme.fg("error", abortMessage), 1, 0));
-			} else if (message.stopReason === "error") {
-				const errorMsg = message.errorMessage || "Unknown error";
-				this.contentContainer.addChild(new Spacer(1));
-				this.contentContainer.addChild(new Text(theme.fg("error", `Error: ${errorMsg}`), 1, 0));
-			}
+		if (errorMessage) {
+			this.contentContainer.addChild(new Spacer(1));
+			this.contentContainer.addChild(new Text(theme.fg("error", errorMessage), 1, 0));
 		}
 	}
 }

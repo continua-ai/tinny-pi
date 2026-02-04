@@ -178,10 +178,14 @@ export class SettingsList implements Component {
 		const displayItems = this.searchEnabled ? this.filteredItems : this.items;
 		if (kb.matches(data, "selectUp")) {
 			if (displayItems.length === 0) return;
-			this.selectedIndex = this.selectedIndex === 0 ? displayItems.length - 1 : this.selectedIndex - 1;
+			if (this.selectedIndex > 0) {
+				this.selectedIndex -= 1;
+			}
 		} else if (kb.matches(data, "selectDown")) {
 			if (displayItems.length === 0) return;
-			this.selectedIndex = this.selectedIndex === displayItems.length - 1 ? 0 : this.selectedIndex + 1;
+			if (this.selectedIndex < displayItems.length - 1) {
+				this.selectedIndex += 1;
+			}
 		} else if (kb.matches(data, "selectConfirm") || data === " ") {
 			this.activateItem();
 		} else if (kb.matches(data, "selectCancel")) {

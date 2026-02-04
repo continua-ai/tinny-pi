@@ -15,6 +15,7 @@ import {
 	type Message,
 	type Model,
 	type OAuthProvider,
+	type TextContent,
 } from "@mariozechner/pi-ai";
 import type {
 	AutocompleteItem,
@@ -71,12 +72,15 @@ import type { TruncationResult } from "../../core/tools/truncate.js";
 import { getChangelogPath, getNewEntries, parseChangelog } from "../../utils/changelog.js";
 import { copyToClipboard } from "../../utils/clipboard.js";
 import { extensionForImageMimeType, readClipboardImage } from "../../utils/clipboard-image.js";
+import { type GitStatusSummary, getGitStatusSummary } from "../../utils/git-status.js";
 import { ensureTool } from "../../utils/tools-manager.js";
 import { ArminComponent } from "./components/armin.js";
 import { AssistantMessageComponent } from "./components/assistant-message.js";
 import { BashExecutionComponent } from "./components/bash-execution.js";
+import { type BlockActionItem, BlockActionPaletteComponent } from "./components/block-action-palette.js";
 import { BorderedLoader } from "./components/bordered-loader.js";
 import { BranchSummaryMessageComponent } from "./components/branch-summary-message.js";
+import { CommandPaletteComponent, type CommandPaletteItem } from "./components/command-palette.js";
 import { CompactionSummaryMessageComponent } from "./components/compaction-summary-message.js";
 import { CustomEditor } from "./components/custom-editor.js";
 import { CustomMessageComponent } from "./components/custom-message.js";
@@ -90,6 +94,7 @@ import { appKey, appKeyHint, editorKey, keyHint, rawKeyHint } from "./components
 import { LoginDialogComponent } from "./components/login-dialog.js";
 import { ModelSelectorComponent } from "./components/model-selector.js";
 import { OAuthSelectorComponent } from "./components/oauth-selector.js";
+import { type PromptStatusChip, PromptStatusChipsComponent } from "./components/prompt-status-chips.js";
 import { ScopedModelsSelectorComponent } from "./components/scoped-models-selector.js";
 import { SessionSelectorComponent } from "./components/session-selector.js";
 import { SettingsSelectorComponent } from "./components/settings-selector.js";
@@ -122,6 +127,30 @@ interface Expandable {
 function isExpandable(obj: unknown): obj is Expandable {
 	return typeof obj === "object" && obj !== null && "setExpanded" in obj && typeof obj.setExpanded === "function";
 }
+
+/** Interface for components that can be collapsed */
+interface BlockCollapsible {
+	setCollapsed(collapsed: boolean): void;
+}
+
+function isBlockCollapsible(obj: unknown): obj is BlockCollapsible {
+	return typeof obj === "object" && obj !== null && "setCollapsed" in obj && typeof obj.setCollapsed === "function";
+}
+
+type BlockActionKind = "user" | "assistant" | "tool";
+
+type BlockFilterMode = "all" | "no-tools" | "messages";
+
+type BlockActionTarget = {
+	id: string;
+	kind: BlockActionKind;
+	label: string;
+	component: Component;
+	text?: string;
+	toolName?: string;
+	toolArgs?: unknown;
+	toolCallId?: string;
+};
 
 type CompactionQueuedMessage = {
 	text: string;
@@ -182,8 +211,30 @@ export class InteractiveMode {
 	// Tool execution tracking: toolCallId -> component
 	private pendingTools = new Map<string, ToolExecutionComponent>();
 
+	// Tool step tracking for the current assistant turn
+	private currentTurnStep = 0;
+	private toolStepByCallId = new Map<string, number>();
+
+	// Turn tracking for block separators
+	private turnIndex = 0;
+
 	// Tool output expansion state
 	private toolOutputExpanded = false;
+
+	// Message block collapse state
+	private blocksCollapsed = false;
+
+	// Block filtering state
+	private blockFilterMode: BlockFilterMode = "all";
+	private blockFilterContainer: Container;
+
+	// Block action palette state
+	private blockActionTargets: BlockActionTarget[] = [];
+	private blockActionId = 0;
+	private blockCollapseState = new Map<string, boolean>();
+	private toolExpandState = new Map<string, boolean>();
+	private toolTargetByCallId = new Map<string, BlockActionTarget>();
+	private streamingBlockTarget: BlockActionTarget | undefined = undefined;
 
 	// Thinking block visibility state
 	private hideThinkingBlock = false;
@@ -228,6 +279,11 @@ export class InteractiveMode {
 	private widgetContainerAbove!: Container;
 	private widgetContainerBelow!: Container;
 
+	// Prompt-area status chips
+	private promptStatus: PromptStatusChipsComponent;
+	private promptStatusTimer: ReturnType<typeof setInterval> | undefined = undefined;
+	private lastPromptStatus = "";
+
 	// Custom footer from extension (undefined = use built-in footer)
 	private customFooter: (Component & { dispose?(): void }) | undefined = undefined;
 
@@ -260,11 +316,13 @@ export class InteractiveMode {
 		this.ui = new TUI(new ProcessTerminal(), this.settingsManager.getShowHardwareCursor());
 		this.ui.setClearOnShrink(this.settingsManager.getClearOnShrink());
 		this.headerContainer = new Container();
+		this.blockFilterContainer = new Container();
 		this.chatContainer = new Container();
 		this.pendingMessagesContainer = new Container();
 		this.statusContainer = new Container();
 		this.widgetContainerAbove = new Container();
 		this.widgetContainerBelow = new Container();
+		this.promptStatus = new PromptStatusChipsComponent();
 		this.keybindings = KeybindingsManager.create();
 		const editorPaddingX = this.settingsManager.getEditorPaddingX();
 		const autocompleteMaxVisible = this.settingsManager.getAutocompleteMaxVisible();
@@ -397,9 +455,13 @@ export class InteractiveMode {
 				rawKeyHint(`${appKey(kb, "cycleModelForward")}/${appKey(kb, "cycleModelBackward")}`, "to cycle models"),
 				hint("selectModel", "to select model"),
 				hint("expandTools", "to expand tools"),
+				hint("toggleBlocks", "to collapse messages"),
+				hint("cycleBlockFilter", "to filter blocks"),
+				hint("blockActions", "for block actions"),
+				hint("commandPalette", "for command palette"),
 				hint("toggleThinking", "to expand thinking"),
 				hint("externalEditor", "for external editor"),
-				rawKeyHint("/", "for commands"),
+				rawKeyHint("/", "for slash commands"),
 				rawKeyHint("!", "to run bash"),
 				rawKeyHint("!!", "to run bash (no context)"),
 				hint("followUp", "to queue follow-up"),
@@ -446,11 +508,14 @@ export class InteractiveMode {
 			}
 		}
 
+		this.updateBlockFilterDisplay();
+		this.ui.addChild(this.blockFilterContainer);
 		this.ui.addChild(this.chatContainer);
 		this.ui.addChild(this.pendingMessagesContainer);
 		this.ui.addChild(this.statusContainer);
 		this.renderWidgets(); // Initialize with default spacer
 		this.ui.addChild(this.widgetContainerAbove);
+		this.ui.addChild(this.promptStatus);
 		this.ui.addChild(this.editorContainer);
 		this.ui.addChild(this.widgetContainerBelow);
 		this.ui.addChild(this.footer);
@@ -458,6 +523,7 @@ export class InteractiveMode {
 
 		this.setupKeyHandlers();
 		this.setupEditorSubmitHandler();
+		this.startPromptStatusUpdates();
 
 		// Initialize extensions first so resources are shown before messages
 		await this.initExtensions();
@@ -484,6 +550,7 @@ export class InteractiveMode {
 
 		// Set up git branch watcher (uses provider instead of footer)
 		this.footerDataProvider.onBranchChange(() => {
+			this.updatePromptStatusChips();
 			this.ui.requestRender();
 		});
 
@@ -1008,9 +1075,12 @@ export class InteractiveMode {
 					this.streamingComponent = undefined;
 					this.streamingMessage = undefined;
 					this.pendingTools.clear();
+					this.resetTurnSteps();
+					this.resetTurnIndex();
 
 					// Render any messages added via setup, or show empty session
 					this.renderInitialMessages();
+					this.updatePromptStatusChips();
 					this.ui.requestRender();
 
 					return { cancelled: false };
@@ -1231,6 +1301,9 @@ export class InteractiveMode {
 	// Maximum total widget lines to prevent viewport overflow
 	private static readonly MAX_WIDGET_LINES = 10;
 
+	// Maximum number of block action targets shown in the palette
+	private static readonly MAX_BLOCK_ACTION_TARGETS = 50;
+
 	/**
 	 * Render all extension widgets to the widget container.
 	 */
@@ -1238,6 +1311,66 @@ export class InteractiveMode {
 		if (!this.widgetContainerAbove || !this.widgetContainerBelow) return;
 		this.renderWidgetContainer(this.widgetContainerAbove, this.extensionWidgetsAbove, true, true);
 		this.renderWidgetContainer(this.widgetContainerBelow, this.extensionWidgetsBelow, false, false);
+		this.ui.requestRender();
+	}
+
+	private startPromptStatusUpdates(): void {
+		this.updatePromptStatusChips();
+		this.promptStatusTimer = setInterval(() => {
+			this.updatePromptStatusChips();
+		}, 5000);
+	}
+
+	private formatPromptChip(label: string, value: string, color: ThemeColor): string {
+		return theme.fg(color, `[${label} ${value}]`);
+	}
+
+	private formatDiffChip(summary: GitStatusSummary): string | null {
+		if (!summary.diff) return null;
+
+		const parts: string[] = [];
+		if (summary.diff.filesChanged > 0) {
+			parts.push(`${summary.diff.filesChanged} file${summary.diff.filesChanged === 1 ? "" : "s"}`);
+		}
+		if (summary.diff.insertions > 0) {
+			parts.push(`+${summary.diff.insertions}`);
+		}
+		if (summary.diff.deletions > 0) {
+			parts.push(`-${summary.diff.deletions}`);
+		}
+
+		if (parts.length === 0) return null;
+		return parts.join(" ");
+	}
+
+	private updatePromptStatusChips(): void {
+		const cwd = this.sessionManager.getCwd();
+		const cwdLabel = this.formatDisplayPath(cwd);
+		const gitStatus = getGitStatusSummary(cwd);
+
+		const chips: PromptStatusChip[] = [{ text: this.formatPromptChip("cwd", cwdLabel, "muted") }];
+		if (gitStatus?.branch) {
+			chips.push({ text: this.formatPromptChip("branch", gitStatus.branch, "accent") });
+		}
+		if (gitStatus?.dirty) {
+			const diffLabel = this.formatDiffChip(gitStatus);
+			if (diffLabel) {
+				chips.push({ text: this.formatPromptChip("diff", diffLabel, "warning") });
+			} else {
+				chips.push({ text: this.formatPromptChip("diff", "dirty", "warning") });
+			}
+		}
+		if (this.blockFilterMode !== "all") {
+			chips.push({
+				text: this.formatPromptChip("filter", this.getBlockFilterLabel(this.blockFilterMode), "accent"),
+				priority: true,
+			});
+		}
+
+		const nextText = chips.map((chip) => chip.text).join(" ");
+		if (nextText === this.lastPromptStatus) return;
+		this.lastPromptStatus = nextText;
+		this.promptStatus.setChips(chips);
 		this.ui.requestRender();
 	}
 
@@ -1772,6 +1905,10 @@ export class InteractiveMode {
 		this.ui.onDebug = () => this.handleDebugCommand();
 		this.defaultEditor.onAction("selectModel", () => this.showModelSelector());
 		this.defaultEditor.onAction("expandTools", () => this.toggleToolOutputExpansion());
+		this.defaultEditor.onAction("toggleBlocks", () => this.toggleBlocksCollapsed());
+		this.defaultEditor.onAction("cycleBlockFilter", () => this.cycleBlockFilterMode());
+		this.defaultEditor.onAction("blockActions", () => this.showBlockActionPalette());
+		this.defaultEditor.onAction("commandPalette", () => this.showCommandPalette());
 		this.defaultEditor.onAction("toggleThinking", () => this.toggleThinkingBlockVisibility());
 		this.defaultEditor.onAction("externalEditor", () => this.openExternalEditor());
 		this.defaultEditor.onAction("followUp", () => this.handleFollowUp());
@@ -2042,8 +2179,15 @@ export class InteractiveMode {
 						this.hideThinkingBlock,
 						this.getMarkdownThemeWithSettings(),
 					);
+					this.streamingComponent.setCollapsed(this.blocksCollapsed);
 					this.streamingMessage = event.message;
 					this.chatContainer.addChild(this.streamingComponent);
+					this.streamingBlockTarget = this.registerBlockActionTarget({
+						kind: "assistant",
+						label: this.formatAssistantLabel(event.message),
+						component: this.streamingComponent,
+						text: this.getAssistantMessageText(event.message),
+					});
 					this.streamingComponent.updateContent(this.streamingMessage);
 					this.ui.requestRender();
 				}
@@ -2053,27 +2197,47 @@ export class InteractiveMode {
 				if (this.streamingComponent && event.message.role === "assistant") {
 					this.streamingMessage = event.message;
 					this.streamingComponent.updateContent(this.streamingMessage);
+					if (this.streamingBlockTarget) {
+						this.streamingBlockTarget.label = this.formatAssistantLabel(this.streamingMessage);
+						this.streamingBlockTarget.text = this.getAssistantMessageText(this.streamingMessage);
+					}
 
-					for (const content of this.streamingMessage.content) {
-						if (content.type === "toolCall") {
-							if (!this.pendingTools.has(content.id)) {
-								this.chatContainer.addChild(new Text("", 0, 0));
-								const component = new ToolExecutionComponent(
-									content.name,
-									content.arguments,
-									{
-										showImages: this.settingsManager.getShowImages(),
-									},
-									this.getRegisteredToolDefinition(content.name),
-									this.ui,
-								);
-								component.setExpanded(this.toolOutputExpanded);
-								this.chatContainer.addChild(component);
-								this.pendingTools.set(content.id, component);
-							} else {
-								const component = this.pendingTools.get(content.id);
-								if (component) {
-									component.updateArgs(content.arguments);
+					if (this.shouldRenderToolBlocks()) {
+						for (const content of this.streamingMessage.content) {
+							if (content.type === "toolCall") {
+								if (!this.pendingTools.has(content.id)) {
+									this.chatContainer.addChild(new Text("", 0, 0));
+									const step = this.assignToolStep(content.id);
+									const component = new ToolExecutionComponent(
+										content.name,
+										content.arguments,
+										{
+											showImages: this.settingsManager.getShowImages(),
+											step,
+										},
+										this.getRegisteredToolDefinition(content.name),
+										this.ui,
+									);
+									component.setExpanded(this.toolOutputExpanded);
+									this.chatContainer.addChild(component);
+									this.pendingTools.set(content.id, component);
+									this.registerBlockActionTarget({
+										kind: "tool",
+										label: this.formatToolLabel(content.name),
+										component,
+										toolName: content.name,
+										toolArgs: content.arguments,
+										toolCallId: content.id,
+									});
+								} else {
+									const component = this.pendingTools.get(content.id);
+									if (component) {
+										component.updateArgs(content.arguments);
+									}
+									const target = this.toolTargetByCallId.get(content.id);
+									if (target) {
+										target.toolArgs = content.arguments;
+									}
 								}
 							}
 						}
@@ -2114,6 +2278,11 @@ export class InteractiveMode {
 							component.setArgsComplete();
 						}
 					}
+					if (this.streamingBlockTarget) {
+						this.streamingBlockTarget.label = this.formatAssistantLabel(this.streamingMessage);
+						this.streamingBlockTarget.text = this.getAssistantMessageText(this.streamingMessage);
+						this.streamingBlockTarget = undefined;
+					}
 					this.streamingComponent = undefined;
 					this.streamingMessage = undefined;
 					this.footer.invalidate();
@@ -2122,12 +2291,17 @@ export class InteractiveMode {
 				break;
 
 			case "tool_execution_start": {
+				if (!this.shouldRenderToolBlocks()) {
+					break;
+				}
 				if (!this.pendingTools.has(event.toolCallId)) {
+					const step = this.assignToolStep(event.toolCallId);
 					const component = new ToolExecutionComponent(
 						event.toolName,
 						event.args,
 						{
 							showImages: this.settingsManager.getShowImages(),
+							step,
 						},
 						this.getRegisteredToolDefinition(event.toolName),
 						this.ui,
@@ -2135,6 +2309,14 @@ export class InteractiveMode {
 					component.setExpanded(this.toolOutputExpanded);
 					this.chatContainer.addChild(component);
 					this.pendingTools.set(event.toolCallId, component);
+					this.registerBlockActionTarget({
+						kind: "tool",
+						label: this.formatToolLabel(event.toolName),
+						component,
+						toolName: event.toolName,
+						toolArgs: event.args,
+						toolCallId: event.toolCallId,
+					});
 					this.ui.requestRender();
 				}
 				break;
@@ -2170,6 +2352,7 @@ export class InteractiveMode {
 					this.streamingComponent = undefined;
 					this.streamingMessage = undefined;
 				}
+				this.streamingBlockTarget = undefined;
 				this.pendingTools.clear();
 
 				await this.checkShutdownRequested();
@@ -2277,6 +2460,32 @@ export class InteractiveMode {
 		}
 	}
 
+	private resetTurnSteps(): void {
+		this.currentTurnStep = 0;
+		this.toolStepByCallId.clear();
+	}
+
+	private assignToolStep(toolCallId: string): number {
+		const existing = this.toolStepByCallId.get(toolCallId);
+		if (existing !== undefined) return existing;
+		const next = this.currentTurnStep + 1;
+		this.currentTurnStep = next;
+		this.toolStepByCallId.set(toolCallId, next);
+		return next;
+	}
+
+	private resetTurnIndex(): void {
+		this.turnIndex = 0;
+	}
+
+	private beginUserTurn(): void {
+		if (this.turnIndex > 0) {
+			this.chatContainer.addChild(new DynamicBorder((text) => theme.fg("borderMuted", text)));
+		}
+		this.turnIndex += 1;
+		this.resetTurnSteps();
+	}
+
 	/** Extract text content from a user message */
 	private getUserMessageText(message: Message): string {
 		if (message.role !== "user") return "";
@@ -2285,6 +2494,430 @@ export class InteractiveMode {
 				? [{ type: "text", text: message.content }]
 				: message.content.filter((c: { type: string }) => c.type === "text");
 		return textBlocks.map((c) => (c as { text: string }).text).join("");
+	}
+
+	private getAssistantMessageText(message: AssistantMessage): string {
+		const textBlocks = message.content.filter((c): c is TextContent => c.type === "text");
+		return textBlocks.map((c) => c.text).join("");
+	}
+
+	private formatAssistantLabel(message: AssistantMessage): string {
+		return message.model ? `Assistant • ${message.model}` : "Assistant";
+	}
+
+	private formatToolLabel(toolName: string): string {
+		return `Tool • ${toolName}`;
+	}
+
+	private resetBlockActionTargets(): void {
+		this.blockActionTargets = [];
+		this.blockActionId = 0;
+		this.blockCollapseState.clear();
+		this.toolExpandState.clear();
+		this.toolTargetByCallId.clear();
+		this.streamingBlockTarget = undefined;
+	}
+
+	private nextBlockActionId(): string {
+		this.blockActionId += 1;
+		return `block-${this.blockActionId}`;
+	}
+
+	private registerBlockActionTarget(target: Omit<BlockActionTarget, "id">): BlockActionTarget {
+		const fullTarget: BlockActionTarget = { id: this.nextBlockActionId(), ...target };
+		this.blockActionTargets.push(fullTarget);
+		if (fullTarget.kind === "user" || fullTarget.kind === "assistant") {
+			this.blockCollapseState.set(fullTarget.id, this.blocksCollapsed);
+		}
+		if (fullTarget.kind === "tool") {
+			this.toolExpandState.set(fullTarget.id, this.toolOutputExpanded);
+			if (fullTarget.toolCallId) {
+				this.toolTargetByCallId.set(fullTarget.toolCallId, fullTarget);
+			}
+		}
+		return fullTarget;
+	}
+
+	private getLatestBlockActionTarget(): BlockActionTarget | undefined {
+		for (let i = this.blockActionTargets.length - 1; i >= 0; i--) {
+			const target = this.blockActionTargets[i];
+			if (target && this.chatContainer.children.includes(target.component)) {
+				return target;
+			}
+		}
+		return undefined;
+	}
+
+	private getBlockActionTargetsForPalette(): BlockActionTarget[] {
+		const visibleTargets = this.blockActionTargets.filter((target) =>
+			this.chatContainer.children.includes(target.component),
+		);
+		const cappedTargets = visibleTargets.slice(-InteractiveMode.MAX_BLOCK_ACTION_TARGETS);
+		return [...cappedTargets].reverse();
+	}
+
+	private formatBlockTargetDescription(target: BlockActionTarget): string | undefined {
+		if (target.kind === "tool") {
+			const summary = this.formatToolArgsSummary(target);
+			return summary || undefined;
+		}
+		const summary = this.formatBlockSummary(target.text ?? "");
+		return summary || undefined;
+	}
+
+	private formatToolArgsSummary(target: BlockActionTarget): string {
+		if (target.toolArgs === undefined) return "";
+		try {
+			return this.formatBlockSummary(JSON.stringify(target.toolArgs));
+		} catch {
+			return "";
+		}
+	}
+
+	private formatBlockSummary(text: string): string {
+		const trimmed = text.trim();
+		if (!trimmed) return "";
+		const firstLine = trimmed.split(/\r?\n/)[0] ?? "";
+		return firstLine.replace(/\s+/g, " ").trim();
+	}
+
+	private formatToolCallText(target: BlockActionTarget): string {
+		const toolName = target.toolName ?? "tool";
+		if (target.toolArgs === undefined) return toolName;
+		try {
+			return `${toolName}\n${JSON.stringify(target.toolArgs, null, 2)}`;
+		} catch {
+			return toolName;
+		}
+	}
+
+	private copyBlockText(text: string, label: string): void {
+		const trimmed = text.trim();
+		if (!trimmed) {
+			this.showStatus(`No ${label} to copy`);
+			return;
+		}
+		try {
+			copyToClipboard(text);
+			this.showStatus(`Copied ${label} to clipboard`);
+		} catch (error) {
+			this.showError(error instanceof Error ? error.message : String(error));
+		}
+	}
+
+	private toggleBlockCollapsedForTarget(target: BlockActionTarget): void {
+		if (!isBlockCollapsible(target.component)) return;
+		const current = this.blockCollapseState.get(target.id) ?? this.blocksCollapsed;
+		const next = !current;
+		target.component.setCollapsed(next);
+		this.blockCollapseState.set(target.id, next);
+		this.ui.requestRender();
+	}
+
+	private toggleToolExpandedForTarget(target: BlockActionTarget): void {
+		if (!isExpandable(target.component)) return;
+		const current = this.toolExpandState.get(target.id) ?? this.toolOutputExpanded;
+		const next = !current;
+		target.component.setExpanded(next);
+		this.toolExpandState.set(target.id, next);
+		this.ui.requestRender();
+	}
+
+	private buildBlockActionItems(target: BlockActionTarget): {
+		items: BlockActionItem[];
+		handlers: Map<string, () => void>;
+	} {
+		const items: BlockActionItem[] = [];
+		const handlers = new Map<string, () => void>();
+
+		const add = (id: string, label: string, handler: () => void, description?: string): void => {
+			items.push({ id, label, description });
+			handlers.set(id, handler);
+		};
+
+		if (target.kind === "user" || target.kind === "assistant") {
+			if (target.text?.trim()) {
+				add("copy-text", "Copy message text", () => this.copyBlockText(target.text ?? "", "message text"));
+			}
+			const summary = this.formatBlockSummary(target.text ?? "");
+			const summaryText = summary ? `${target.label}: ${summary}` : target.label;
+			add("copy-summary", "Copy summary", () => this.copyBlockText(summaryText, "summary"));
+			if (isBlockCollapsible(target.component)) {
+				add("toggle-collapse", "Toggle collapse", () => this.toggleBlockCollapsedForTarget(target));
+			}
+		}
+
+		if (target.kind === "tool") {
+			const toolName = target.toolName ?? "tool";
+			add("copy-tool-call", `Copy ${toolName} call`, () =>
+				this.copyBlockText(this.formatToolCallText(target), `${toolName} call`),
+			);
+			if (isExpandable(target.component)) {
+				add("toggle-tool-output", "Toggle tool output", () => this.toggleToolExpandedForTarget(target));
+			}
+		}
+
+		return { items, handlers };
+	}
+
+	private showBlockActionPalette(): void {
+		if (!this.getLatestBlockActionTarget()) {
+			this.showStatus("No blocks to act on");
+			return;
+		}
+
+		const showActionPicker = (target: BlockActionTarget) => {
+			const { items, handlers } = this.buildBlockActionItems(target);
+			if (items.length === 0) {
+				this.showStatus("No actions available for this block");
+				showBlockPicker();
+				return;
+			}
+
+			this.showSelector((done) => {
+				const palette = new BlockActionPaletteComponent(
+					`Block actions • ${target.label}`,
+					items,
+					(item) => {
+						done();
+						const handler = handlers.get(item.id);
+						if (handler) handler();
+						this.ui.requestRender();
+					},
+					() => {
+						done();
+						showBlockPicker();
+					},
+				);
+				return { component: palette, focus: palette };
+			});
+		};
+
+		const showBlockPicker = () => {
+			const targets = this.getBlockActionTargetsForPalette();
+			if (targets.length === 0) {
+				this.showStatus("No blocks to act on");
+				return;
+			}
+
+			const targetById = new Map(targets.map((target) => [target.id, target]));
+			const items = targets.map((target) => ({
+				id: target.id,
+				label: target.label,
+				description: this.formatBlockTargetDescription(target),
+			}));
+
+			this.showSelector((done) => {
+				const palette = new BlockActionPaletteComponent(
+					"Block actions",
+					items,
+					(item) => {
+						done();
+						const target = targetById.get(item.id);
+						if (!target) {
+							this.showStatus("Block no longer available");
+							return;
+						}
+						showActionPicker(target);
+					},
+					() => {
+						done();
+						this.ui.requestRender();
+					},
+				);
+				return { component: palette, focus: palette };
+			});
+		};
+
+		showBlockPicker();
+	}
+
+	private runSlashCommand(command: string): void {
+		void this.defaultEditor.onSubmit?.(command);
+	}
+
+	private prefillEditorCommand(command: string): void {
+		this.editor.setText(command);
+		this.ui.requestRender();
+	}
+
+	private buildCommandPaletteItems(): {
+		items: CommandPaletteItem[];
+		handlers: Map<string, () => void | Promise<void>>;
+	} {
+		const items: CommandPaletteItem[] = [];
+		const handlers = new Map<string, () => void | Promise<void>>();
+
+		const addItem = (item: CommandPaletteItem, handler: () => void | Promise<void>): void => {
+			items.push(item);
+			handlers.set(item.id, handler);
+		};
+
+		const addCommand = (
+			id: string,
+			name: string,
+			description: string | undefined,
+			sourceLabel: string,
+			handler: () => void | Promise<void>,
+		): void => {
+			const label = `/${name}`;
+			const desc = description?.trim() ? description.trim() : "No description";
+			addItem(
+				{
+					id,
+					label,
+					description: `${sourceLabel} · ${desc}`,
+					searchText: `${name} ${label} ${desc} ${sourceLabel}`,
+				},
+				handler,
+			);
+		};
+
+		const addAction = (
+			id: string,
+			label: string,
+			description: string,
+			handler: () => void | Promise<void>,
+			hint?: string,
+		): void => {
+			const hintText = hint ? `${description} (${hint})` : description;
+			addItem(
+				{
+					id,
+					label,
+					description: `Action · ${hintText}`,
+					searchText: `${label} ${description} ${hint ?? ""}`,
+				},
+				handler,
+			);
+		};
+
+		const keybindings = this.keybindings;
+		addAction(
+			"action:block-actions",
+			"Block actions",
+			"Copy or collapse a block",
+			() => this.showBlockActionPalette(),
+			appKey(keybindings, "blockActions"),
+		);
+		addAction(
+			"action:toggle-blocks",
+			"Toggle message collapse",
+			"Collapse or expand message blocks",
+			() => this.toggleBlocksCollapsed(),
+			appKey(keybindings, "toggleBlocks"),
+		);
+		addAction(
+			"action:toggle-tools",
+			"Toggle tool output",
+			"Collapse or expand tool output",
+			() => this.toggleToolOutputExpansion(),
+			appKey(keybindings, "expandTools"),
+		);
+		addAction(
+			"action:toggle-thinking",
+			"Toggle thinking blocks",
+			"Show or hide thinking blocks",
+			() => this.toggleThinkingBlockVisibility(),
+			appKey(keybindings, "toggleThinking"),
+		);
+
+		const filterModes: Array<{ mode: BlockFilterMode; label: string; description: string }> = [
+			{ mode: "all", label: "All", description: "Show all blocks" },
+			{ mode: "no-tools", label: "No tools", description: "Hide tool output blocks" },
+			{ mode: "messages", label: "User + assistant", description: "Show user and assistant blocks only" },
+		];
+		for (const filter of filterModes) {
+			const isCurrent = this.blockFilterMode === filter.mode;
+			const description = isCurrent ? `${filter.description} (current)` : filter.description;
+			addAction(`action:block-filter:${filter.mode}`, `Block filter: ${filter.label}`, description, () =>
+				this.setBlockFilterMode(filter.mode),
+			);
+		}
+
+		const builtInHandlers = new Map<string, () => void | Promise<void>>([
+			["settings", () => this.showSettingsSelector()],
+			["model", () => this.handleModelCommand()],
+			["scoped-models", () => this.showModelsSelector()],
+			["export", () => this.prefillEditorCommand("/export ")],
+			["share", () => this.handleShareCommand()],
+			["copy", () => this.handleCopyCommand()],
+			["name", () => this.prefillEditorCommand("/name ")],
+			["session", () => this.handleSessionCommand()],
+			["changelog", () => this.handleChangelogCommand()],
+			["hotkeys", () => this.handleHotkeysCommand()],
+			["fork", () => this.showUserMessageSelector()],
+			["tree", () => this.showTreeSelector()],
+			["login", () => this.showOAuthSelector("login")],
+			["logout", () => this.showOAuthSelector("logout")],
+			["new", () => this.handleClearCommand()],
+			["compact", () => this.handleCompactCommand()],
+			["resume", () => this.showSessionSelector()],
+			["reload", () => this.handleReloadCommand()],
+		]);
+
+		for (const command of BUILTIN_SLASH_COMMANDS) {
+			const handler = builtInHandlers.get(command.name) ?? (() => this.runSlashCommand(`/${command.name}`));
+			addCommand(`command:${command.name}`, command.name, command.description, "Command", handler);
+		}
+
+		for (const template of this.session.promptTemplates) {
+			addCommand(`prompt:${template.name}`, template.name, template.description ?? "Prompt template", "Prompt", () =>
+				this.prefillEditorCommand(`/${template.name} `),
+			);
+		}
+
+		const builtInNames = new Set(BUILTIN_SLASH_COMMANDS.map((command) => command.name));
+		const extensionCommands = this.session.extensionRunner?.getRegisteredCommands(builtInNames) ?? [];
+		for (const command of extensionCommands) {
+			addCommand(
+				`extension:${command.name}`,
+				command.name,
+				command.description ?? "Extension command",
+				"Extension",
+				() => this.prefillEditorCommand(`/${command.name} `),
+			);
+		}
+
+		if (this.settingsManager.getEnableSkillCommands()) {
+			for (const skill of this.session.resourceLoader.getSkills().skills) {
+				const commandName = `skill:${skill.name}`;
+				addCommand(`skill:${skill.name}`, commandName, skill.description ?? "Skill command", "Skill", () =>
+					this.prefillEditorCommand(`/${commandName} `),
+				);
+			}
+		}
+
+		return { items, handlers };
+	}
+
+	private showCommandPalette(): void {
+		const { items, handlers } = this.buildCommandPaletteItems();
+		if (items.length === 0) {
+			this.showStatus("No commands available");
+			return;
+		}
+
+		this.showSelector((done) => {
+			const palette = new CommandPaletteComponent(
+				"Command palette",
+				items,
+				(item) => {
+					done();
+					const handler = handlers.get(item.id);
+					if (!handler) return;
+					Promise.resolve(handler()).catch((error) => {
+						this.showError(error instanceof Error ? error.message : String(error));
+					});
+					this.ui.requestRender();
+				},
+				() => {
+					done();
+					this.ui.requestRender();
+				},
+			);
+			return { component: palette, focus: palette };
+		});
 	}
 
 	/**
@@ -2314,6 +2947,7 @@ export class InteractiveMode {
 	}
 
 	private addMessageToChat(message: AgentMessage, options?: { populateHistory?: boolean }): void {
+		if (!this.shouldRenderMessage(message)) return;
 		switch (message.role) {
 			case "bashExecution": {
 				const component = new BashExecutionComponent(message.command, this.ui, message.excludeFromContext);
@@ -2327,6 +2961,13 @@ export class InteractiveMode {
 					message.fullOutputPath,
 				);
 				this.chatContainer.addChild(component);
+				this.registerBlockActionTarget({
+					kind: "tool",
+					label: this.formatToolLabel("bash"),
+					component,
+					toolName: "bash",
+					toolArgs: { command: message.command },
+				});
 				break;
 			}
 			case "custom": {
@@ -2355,27 +2996,43 @@ export class InteractiveMode {
 			case "user": {
 				const textContent = this.getUserMessageText(message);
 				if (textContent) {
+					this.beginUserTurn();
 					const skillBlock = parseSkillBlock(textContent);
 					if (skillBlock) {
-						// Render skill block (collapsible)
-						this.chatContainer.addChild(new Spacer(1));
-						const component = new SkillInvocationMessageComponent(
-							skillBlock,
-							this.getMarkdownThemeWithSettings(),
-						);
-						component.setExpanded(this.toolOutputExpanded);
-						this.chatContainer.addChild(component);
-						// Render user message separately if present
-						if (skillBlock.userMessage) {
-							const userComponent = new UserMessageComponent(
-								skillBlock.userMessage,
+						const showSkillBlock = this.blockFilterMode !== "messages";
+						if (showSkillBlock) {
+							// Render skill block (collapsible)
+							this.chatContainer.addChild(new Spacer(1));
+							const component = new SkillInvocationMessageComponent(
+								skillBlock,
 								this.getMarkdownThemeWithSettings(),
 							);
+							component.setExpanded(this.toolOutputExpanded);
+							this.chatContainer.addChild(component);
+						}
+						const userMessage =
+							skillBlock.userMessage ?? (showSkillBlock ? undefined : `/skill:${skillBlock.name}`);
+						if (userMessage) {
+							const userComponent = new UserMessageComponent(userMessage, this.getMarkdownThemeWithSettings());
+							userComponent.setCollapsed(this.blocksCollapsed);
 							this.chatContainer.addChild(userComponent);
+							this.registerBlockActionTarget({
+								kind: "user",
+								label: "User",
+								component: userComponent,
+								text: userMessage,
+							});
 						}
 					} else {
 						const userComponent = new UserMessageComponent(textContent, this.getMarkdownThemeWithSettings());
+						userComponent.setCollapsed(this.blocksCollapsed);
 						this.chatContainer.addChild(userComponent);
+						this.registerBlockActionTarget({
+							kind: "user",
+							label: "User",
+							component: userComponent,
+							text: textContent,
+						});
 					}
 					if (options?.populateHistory) {
 						this.editor.addToHistory?.(textContent);
@@ -2389,7 +3046,14 @@ export class InteractiveMode {
 					this.hideThinkingBlock,
 					this.getMarkdownThemeWithSettings(),
 				);
+				assistantComponent.setCollapsed(this.blocksCollapsed);
 				this.chatContainer.addChild(assistantComponent);
+				this.registerBlockActionTarget({
+					kind: "assistant",
+					label: this.formatAssistantLabel(message),
+					component: assistantComponent,
+					text: this.getAssistantMessageText(message),
+				});
 				break;
 			}
 			case "toolResult": {
@@ -2413,47 +3077,67 @@ export class InteractiveMode {
 		options: { updateFooter?: boolean; populateHistory?: boolean } = {},
 	): void {
 		this.pendingTools.clear();
+		this.resetTurnIndex();
+		this.resetBlockActionTargets();
 
 		if (options.updateFooter) {
 			this.footer.invalidate();
 			this.updateEditorBorderColor();
 		}
 
+		let stepIndex = 0;
 		for (const message of sessionContext.messages) {
+			if (message.role === "user") {
+				stepIndex = 0;
+			}
 			// Assistant messages need special handling for tool calls
 			if (message.role === "assistant") {
 				this.addMessageToChat(message);
-				// Render tool call components
-				for (const content of message.content) {
-					if (content.type === "toolCall") {
-						const component = new ToolExecutionComponent(
-							content.name,
-							content.arguments,
-							{ showImages: this.settingsManager.getShowImages() },
-							this.getRegisteredToolDefinition(content.name),
-							this.ui,
-						);
-						component.setExpanded(this.toolOutputExpanded);
-						this.chatContainer.addChild(component);
+				if (this.shouldRenderToolBlocks()) {
+					// Render tool call components
+					for (const content of message.content) {
+						if (content.type === "toolCall") {
+							const step = ++stepIndex;
+							const component = new ToolExecutionComponent(
+								content.name,
+								content.arguments,
+								{ showImages: this.settingsManager.getShowImages(), step },
+								this.getRegisteredToolDefinition(content.name),
+								this.ui,
+							);
+							component.setExpanded(this.toolOutputExpanded);
+							this.chatContainer.addChild(component);
+							this.registerBlockActionTarget({
+								kind: "tool",
+								label: this.formatToolLabel(content.name),
+								component,
+								toolName: content.name,
+								toolArgs: content.arguments,
+								toolCallId: content.id,
+							});
 
-						if (message.stopReason === "aborted" || message.stopReason === "error") {
-							let errorMessage: string;
-							if (message.stopReason === "aborted") {
-								const retryAttempt = this.session.retryAttempt;
-								errorMessage =
-									retryAttempt > 0
-										? `Aborted after ${retryAttempt} retry attempt${retryAttempt > 1 ? "s" : ""}`
-										: "Operation aborted";
+							if (message.stopReason === "aborted" || message.stopReason === "error") {
+								let errorMessage: string;
+								if (message.stopReason === "aborted") {
+									const retryAttempt = this.session.retryAttempt;
+									errorMessage =
+										retryAttempt > 0
+											? `Aborted after ${retryAttempt} retry attempt${retryAttempt > 1 ? "s" : ""}`
+											: "Operation aborted";
+								} else {
+									errorMessage = message.errorMessage || "Error";
+								}
+								component.updateResult({ content: [{ type: "text", text: errorMessage }], isError: true });
 							} else {
-								errorMessage = message.errorMessage || "Error";
+								this.pendingTools.set(content.id, component);
 							}
-							component.updateResult({ content: [{ type: "text", text: errorMessage }], isError: true });
-						} else {
-							this.pendingTools.set(content.id, component);
 						}
 					}
 				}
 			} else if (message.role === "toolResult") {
+				if (!this.shouldRenderToolBlocks()) {
+					continue;
+				}
 				// Match tool results to pending tool components
 				const component = this.pendingTools.get(message.toolCallId);
 				if (component) {
@@ -2658,12 +3342,121 @@ export class InteractiveMode {
 
 	private setToolsExpanded(expanded: boolean): void {
 		this.toolOutputExpanded = expanded;
+		this.toolExpandState.clear();
 		for (const child of this.chatContainer.children) {
 			if (isExpandable(child)) {
 				child.setExpanded(expanded);
 			}
 		}
 		this.ui.requestRender();
+	}
+
+	private toggleBlocksCollapsed(): void {
+		this.setBlocksCollapsed(!this.blocksCollapsed);
+	}
+
+	private setBlocksCollapsed(collapsed: boolean): void {
+		this.blocksCollapsed = collapsed;
+		this.blockCollapseState.clear();
+		for (const child of this.chatContainer.children) {
+			if (isBlockCollapsible(child)) {
+				child.setCollapsed(collapsed);
+			}
+		}
+		this.ui.requestRender();
+	}
+
+	private cycleBlockFilterMode(): void {
+		const modes: BlockFilterMode[] = ["all", "no-tools", "messages"];
+		const currentIndex = modes.indexOf(this.blockFilterMode);
+		const next = modes[(currentIndex + 1) % modes.length];
+		this.setBlockFilterMode(next);
+	}
+
+	private setBlockFilterMode(mode: BlockFilterMode): void {
+		if (this.blockFilterMode === mode) return;
+		this.blockFilterMode = mode;
+		this.updateBlockFilterDisplay();
+		this.updatePromptStatusChips();
+
+		this.chatContainer.clear();
+		this.rebuildChatFromMessages();
+
+		if (this.streamingComponent && this.streamingMessage && this.shouldRenderMessage(this.streamingMessage)) {
+			this.streamingComponent.setHideThinkingBlock(this.hideThinkingBlock);
+			this.streamingComponent.setCollapsed(this.blocksCollapsed);
+			this.streamingComponent.updateContent(this.streamingMessage);
+			this.chatContainer.addChild(this.streamingComponent);
+			this.streamingBlockTarget = this.registerBlockActionTarget({
+				kind: "assistant",
+				label: this.formatAssistantLabel(this.streamingMessage),
+				component: this.streamingComponent,
+				text: this.getAssistantMessageText(this.streamingMessage),
+			});
+			if (this.shouldRenderToolBlocks()) {
+				this.restoreStreamingToolBlocks();
+			}
+		}
+
+		this.showStatus(`Block filter: ${this.getBlockFilterLabel(mode)}`);
+	}
+
+	private updateBlockFilterDisplay(): void {
+		this.blockFilterContainer.clear();
+		if (this.blockFilterMode === "all") return;
+		const label = this.getBlockFilterLabel(this.blockFilterMode);
+		const hint = appKey(this.keybindings, "cycleBlockFilter");
+		const text = theme.fg("dim", `Filter: ${label} (${hint} to cycle)`);
+		this.blockFilterContainer.addChild(new TruncatedText(text, 1, 0));
+	}
+
+	private getBlockFilterLabel(mode: BlockFilterMode): string {
+		if (mode === "no-tools") return "No tools";
+		if (mode === "messages") return "User + assistant";
+		return "All";
+	}
+
+	private shouldRenderMessage(message: AgentMessage): boolean {
+		if (this.blockFilterMode === "all") return true;
+		if (this.blockFilterMode === "no-tools") {
+			return message.role !== "bashExecution";
+		}
+		return message.role === "user" || message.role === "assistant";
+	}
+
+	private shouldRenderToolBlocks(): boolean {
+		return this.blockFilterMode === "all";
+	}
+
+	private restoreStreamingToolBlocks(): void {
+		if (!this.streamingMessage) return;
+		for (const content of this.streamingMessage.content) {
+			if (content.type !== "toolCall") continue;
+			if (this.pendingTools.has(content.id)) continue;
+			this.chatContainer.addChild(new Text("", 0, 0));
+			const step = this.assignToolStep(content.id);
+			const component = new ToolExecutionComponent(
+				content.name,
+				content.arguments,
+				{
+					showImages: this.settingsManager.getShowImages(),
+					step,
+				},
+				this.getRegisteredToolDefinition(content.name),
+				this.ui,
+			);
+			component.setExpanded(this.toolOutputExpanded);
+			this.chatContainer.addChild(component);
+			this.pendingTools.set(content.id, component);
+			this.registerBlockActionTarget({
+				kind: "tool",
+				label: this.formatToolLabel(content.name),
+				component,
+				toolName: content.name,
+				toolArgs: content.arguments,
+				toolCallId: content.id,
+			});
+		}
 	}
 
 	private toggleThinkingBlockVisibility(): void {
@@ -2677,8 +3470,18 @@ export class InteractiveMode {
 		// If streaming, re-add the streaming component with updated visibility and re-render
 		if (this.streamingComponent && this.streamingMessage) {
 			this.streamingComponent.setHideThinkingBlock(this.hideThinkingBlock);
+			this.streamingComponent.setCollapsed(this.blocksCollapsed);
 			this.streamingComponent.updateContent(this.streamingMessage);
 			this.chatContainer.addChild(this.streamingComponent);
+			this.streamingBlockTarget = this.registerBlockActionTarget({
+				kind: "assistant",
+				label: this.formatAssistantLabel(this.streamingMessage),
+				component: this.streamingComponent,
+				text: this.getAssistantMessageText(this.streamingMessage),
+			});
+			if (this.shouldRenderToolBlocks()) {
+				this.restoreStreamingToolBlocks();
+			}
 		}
 
 		this.showStatus(`Thinking blocks: ${this.hideThinkingBlock ? "hidden" : "visible"}`);
@@ -2948,9 +3751,19 @@ export class InteractiveMode {
 
 	/** Move pending bash components from pending area to chat */
 	private flushPendingBashComponents(): void {
+		const showTools = this.shouldRenderToolBlocks();
 		for (const component of this.pendingBashComponents) {
 			this.pendingMessagesContainer.removeChild(component);
-			this.chatContainer.addChild(component);
+			if (showTools) {
+				this.chatContainer.addChild(component);
+				this.registerBlockActionTarget({
+					kind: "tool",
+					label: this.formatToolLabel("bash"),
+					component,
+					toolName: "bash",
+					toolArgs: { command: component.getCommand() },
+				});
+			}
 		}
 		this.pendingBashComponents = [];
 	}
@@ -3529,6 +4342,8 @@ export class InteractiveMode {
 		this.streamingComponent = undefined;
 		this.streamingMessage = undefined;
 		this.pendingTools.clear();
+		this.resetTurnSteps();
+		this.resetTurnIndex();
 
 		// Switch session via AgentSession (emits extension session events)
 		await this.session.switchSession(sessionPath);
@@ -3536,6 +4351,7 @@ export class InteractiveMode {
 		// Clear and re-render the chat
 		this.chatContainer.clear();
 		this.renderInitialMessages();
+		this.updatePromptStatusChips();
 		this.showStatus("Resumed session");
 	}
 
@@ -3989,6 +4805,10 @@ export class InteractiveMode {
 		const cycleModelForward = this.getAppKeyDisplay("cycleModelForward");
 		const selectModel = this.getAppKeyDisplay("selectModel");
 		const expandTools = this.getAppKeyDisplay("expandTools");
+		const toggleBlocks = this.getAppKeyDisplay("toggleBlocks");
+		const cycleBlockFilter = this.getAppKeyDisplay("cycleBlockFilter");
+		const blockActions = this.getAppKeyDisplay("blockActions");
+		const commandPalette = this.getAppKeyDisplay("commandPalette");
 		const toggleThinking = this.getAppKeyDisplay("toggleThinking");
 		const externalEditor = this.getAppKeyDisplay("externalEditor");
 		const followUp = this.getAppKeyDisplay("followUp");
@@ -4031,6 +4851,10 @@ export class InteractiveMode {
 | \`${cycleModelForward}\` | Cycle models |
 | \`${selectModel}\` | Open model selector |
 | \`${expandTools}\` | Toggle tool output expansion |
+| \`${toggleBlocks}\` | Toggle message block collapse |
+| \`${cycleBlockFilter}\` | Cycle block filters |
+| \`${blockActions}\` | Open block action palette |
+| \`${commandPalette}\` | Open command palette |
 | \`${toggleThinking}\` | Toggle thinking block visibility |
 | \`${externalEditor}\` | Edit message in external editor |
 | \`${followUp}\` | Queue follow-up message |
@@ -4086,9 +4910,13 @@ export class InteractiveMode {
 		this.streamingComponent = undefined;
 		this.streamingMessage = undefined;
 		this.pendingTools.clear();
+		this.resetTurnSteps();
+		this.resetTurnIndex();
+		this.resetBlockActionTargets();
 
 		this.chatContainer.addChild(new Spacer(1));
 		this.chatContainer.addChild(new Text(`${theme.fg("accent", "✓ New session started")}`, 1, 1));
+		this.updatePromptStatusChips();
 		this.ui.requestRender();
 	}
 
@@ -4156,29 +4984,35 @@ export class InteractiveMode {
 				})
 			: undefined;
 
+		const showTools = this.shouldRenderToolBlocks();
+
 		// If extension returned a full result, use it directly
 		if (eventResult?.result) {
 			const result = eventResult.result;
 
 			// Create UI component for display
-			this.bashComponent = new BashExecutionComponent(command, this.ui, excludeFromContext);
-			if (this.session.isStreaming) {
-				this.pendingMessagesContainer.addChild(this.bashComponent);
-				this.pendingBashComponents.push(this.bashComponent);
-			} else {
-				this.chatContainer.addChild(this.bashComponent);
+			this.bashComponent = showTools ? new BashExecutionComponent(command, this.ui, excludeFromContext) : undefined;
+			if (this.bashComponent) {
+				if (this.session.isStreaming) {
+					this.pendingMessagesContainer.addChild(this.bashComponent);
+					this.pendingBashComponents.push(this.bashComponent);
+				} else {
+					this.chatContainer.addChild(this.bashComponent);
+				}
 			}
 
 			// Show output and complete
-			if (result.output) {
+			if (this.bashComponent && result.output) {
 				this.bashComponent.appendOutput(result.output);
 			}
-			this.bashComponent.setComplete(
-				result.exitCode,
-				result.cancelled,
-				result.truncated ? ({ truncated: true, content: result.output } as TruncationResult) : undefined,
-				result.fullOutputPath,
-			);
+			if (this.bashComponent) {
+				this.bashComponent.setComplete(
+					result.exitCode,
+					result.cancelled,
+					result.truncated ? ({ truncated: true, content: result.output } as TruncationResult) : undefined,
+					result.fullOutputPath,
+				);
+			}
 
 			// Record the result in session
 			this.session.recordBashResult(command, result, { excludeFromContext });
@@ -4189,17 +5023,19 @@ export class InteractiveMode {
 
 		// Normal execution path (possibly with custom operations)
 		const isDeferred = this.session.isStreaming;
-		this.bashComponent = new BashExecutionComponent(command, this.ui, excludeFromContext);
+		this.bashComponent = showTools ? new BashExecutionComponent(command, this.ui, excludeFromContext) : undefined;
 
-		if (isDeferred) {
-			// Show in pending area when agent is streaming
-			this.pendingMessagesContainer.addChild(this.bashComponent);
-			this.pendingBashComponents.push(this.bashComponent);
-		} else {
-			// Show in chat immediately when agent is idle
-			this.chatContainer.addChild(this.bashComponent);
+		if (this.bashComponent) {
+			if (isDeferred) {
+				// Show in pending area when agent is streaming
+				this.pendingMessagesContainer.addChild(this.bashComponent);
+				this.pendingBashComponents.push(this.bashComponent);
+			} else {
+				// Show in chat immediately when agent is idle
+				this.chatContainer.addChild(this.bashComponent);
+			}
+			this.ui.requestRender();
 		}
-		this.ui.requestRender();
 
 		try {
 			const result = await this.session.executeBash(
@@ -4304,6 +5140,10 @@ export class InteractiveMode {
 		if (this.loadingAnimation) {
 			this.loadingAnimation.stop();
 			this.loadingAnimation = undefined;
+		}
+		if (this.promptStatusTimer) {
+			clearInterval(this.promptStatusTimer);
+			this.promptStatusTimer = undefined;
 		}
 		this.footer.dispose();
 		this.footerDataProvider.dispose();

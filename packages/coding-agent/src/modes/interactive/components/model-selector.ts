@@ -283,17 +283,21 @@ export class ModelSelectorComponent extends Container implements Focusable {
 			}
 			return;
 		}
-		// Up arrow - wrap to bottom when at top
+		// Up arrow - clamp at top
 		if (kb.matches(keyData, "selectUp")) {
 			if (this.filteredModels.length === 0) return;
-			this.selectedIndex = this.selectedIndex === 0 ? this.filteredModels.length - 1 : this.selectedIndex - 1;
-			this.updateList();
+			if (this.selectedIndex > 0) {
+				this.selectedIndex -= 1;
+				this.updateList();
+			}
 		}
-		// Down arrow - wrap to top when at bottom
+		// Down arrow - clamp at bottom
 		else if (kb.matches(keyData, "selectDown")) {
 			if (this.filteredModels.length === 0) return;
-			this.selectedIndex = this.selectedIndex === this.filteredModels.length - 1 ? 0 : this.selectedIndex + 1;
-			this.updateList();
+			if (this.selectedIndex < this.filteredModels.length - 1) {
+				this.selectedIndex += 1;
+				this.updateList();
+			}
 		}
 		// Enter
 		else if (kb.matches(keyData, "selectConfirm")) {

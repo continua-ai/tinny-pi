@@ -25,6 +25,18 @@ This document captures how we keep `continua-ai/tinny-pi` clean and easy to sync
 - Prefer wrappers and new components over core refactors.
 - Document settings/migrations whenever we introduce a fork-only option.
 
+## UI/TUI direction
+
+- Primary approach: extend `packages/tui` with **viewport-aware rendering** to support sticky headers and block-level UI.
+- If viewport-aware rendering becomes too complex or unstable, evaluate migrating to **terminal-kit**.
+- Avoid forking the TUI package; layer changes as additive APIs where possible.
+
+## Fork toggles and performance options
+
+- Add a single setting to disable **all Continua-specific UI differences**, restoring upstream `pi` behavior.
+- Add per-feature toggles for performance-sensitive behaviors (e.g., git polling), **default on**.
+- Keep these toggles documented and opt-in to disabling, not opt-in to enabling.
+
 ## Docs and assets
 
 - Avoid adding binary assets unless required.

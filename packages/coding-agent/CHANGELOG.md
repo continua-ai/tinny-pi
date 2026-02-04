@@ -2,6 +2,30 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added headers for user and assistant messages in the interactive chat view.
+- Added message block collapse toggle with previews and tool step labels in the interactive chat view.
+- Added turn separators between user prompts in the interactive chat view.
+- Added prompt status chips for cwd, branch, and dirty diff summary in the interactive chat view.
+- Added sticky headers for long message/tool blocks in the interactive chat view.
+- Added block action palette for copying and collapsing message or tool blocks.
+- Added tool step cards above tool output blocks in the interactive chat view.
+- Added block filtering modes to hide tool output or focus on user/assistant messages in the interactive chat view.
+- Added a unified command palette for slash commands, prompts, skills, and block actions.
+- Expanded the block action palette to pick a target block before choosing an action.
+- Added command palette entries and prompt status chips to reflect active block filters.
+
+### Changed
+
+- Tool output collapse now hides inline images until expanded.
+
+### Fixed
+
+- Fixed selector navigation wrapping at list boundaries to reduce scroll stutter.
+- Fixed sticky headers duplicating tool step cards when content shrinks under overlays.
+- Fixed prompt status filter chips truncating out of view on narrow layouts.
+
 ## [0.51.4] - 2026-02-03
 
 ### New Features

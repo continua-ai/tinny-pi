@@ -825,9 +825,15 @@ class TreeList implements Component {
 	handleInput(keyData: string): void {
 		const kb = getEditorKeybindings();
 		if (kb.matches(keyData, "selectUp")) {
-			this.selectedIndex = this.selectedIndex === 0 ? this.filteredNodes.length - 1 : this.selectedIndex - 1;
+			if (this.filteredNodes.length === 0) return;
+			if (this.selectedIndex > 0) {
+				this.selectedIndex -= 1;
+			}
 		} else if (kb.matches(keyData, "selectDown")) {
-			this.selectedIndex = this.selectedIndex === this.filteredNodes.length - 1 ? 0 : this.selectedIndex + 1;
+			if (this.filteredNodes.length === 0) return;
+			if (this.selectedIndex < this.filteredNodes.length - 1) {
+				this.selectedIndex += 1;
+			}
 		} else if (kb.matches(keyData, "cursorLeft")) {
 			// Page up
 			this.selectedIndex = Math.max(0, this.selectedIndex - this.maxVisibleLines);

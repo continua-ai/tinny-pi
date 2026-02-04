@@ -11,6 +11,27 @@ import { getCapabilities, isImageLine, setCellDimensions } from "./terminal-imag
 import { extractSegments, sliceByColumn, sliceWithWidth, visibleWidth } from "./utils.js";
 
 /**
+ * Viewport information for renderers that need viewport context.
+ */
+export type ViewportInfo = {
+	/** Current viewport width in columns. */
+	width: number;
+	/** Current viewport height in rows. */
+	height: number;
+	/** Viewport top row index relative to the component's content. */
+	top: number;
+};
+
+/**
+ * Result for viewport-aware rendering.
+ * contentHeight should match the full content height for the component.
+ */
+export type ViewportRenderResult = {
+	lines: string[];
+	contentHeight: number;
+};
+
+/**
  * Component interface - all components must implement this
  */
 export interface Component {
@@ -20,6 +41,12 @@ export interface Component {
 	 * @returns Array of strings, each representing a line
 	 */
 	render(width: number): string[];
+
+	/**
+	 * Optional viewport-aware render hook.
+	 * When provided, it should return full content lines plus content height.
+	 */
+	renderViewport?(width: number, viewport: ViewportInfo): ViewportRenderResult;
 
 	/**
 	 * Optional handler for keyboard input when component has focus
@@ -53,6 +80,13 @@ export interface Focusable {
 /** Type guard to check if a component implements Focusable */
 export function isFocusable(component: Component | null): component is Component & Focusable {
 	return component !== null && "focused" in component;
+}
+
+/** Type guard to check if a component implements viewport-aware rendering */
+export function isViewportAware(
+	component: Component | null,
+): component is Component & Required<Pick<Component, "renderViewport">> {
+	return component !== null && typeof component.renderViewport === "function";
 }
 
 /**
@@ -181,6 +215,27 @@ export class Container implements Component {
 		for (const child of this.children) {
 			child.invalidate?.();
 		}
+	}
+
+	renderViewport(width: number, viewport: ViewportInfo): ViewportRenderResult {
+		const lines: string[] = [];
+		let contentHeight = 0;
+		for (const child of this.children) {
+			const childViewport: ViewportInfo = {
+				...viewport,
+				top: Math.max(0, viewport.top - contentHeight),
+			};
+			if (isViewportAware(child)) {
+				const result = child.renderViewport(width, childViewport);
+				lines.push(...result.lines);
+				contentHeight += Math.max(result.contentHeight, result.lines.length);
+			} else {
+				const childLines = child.render(width);
+				lines.push(...childLines);
+				contentHeight += childLines.length;
+			}
+		}
+		return { lines, contentHeight };
 	}
 
 	render(width: number): string[] {
@@ -826,8 +881,9 @@ export class TUI extends Container {
 			return targetScreenRow - currentScreenRow;
 		};
 
-		// Render all components to get new lines
-		let newLines = this.render(width);
+		const viewport: ViewportInfo = { width, height, top: viewportTop };
+		const renderResult = this.renderViewport(width, viewport);
+		let newLines = renderResult.lines;
 
 		// Composite overlays into the rendered lines (before differential compare)
 		if (this.overlayStack.length > 0) {

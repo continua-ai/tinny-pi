@@ -58,6 +58,15 @@ npm test                          # Run all tests
 npm test -- test/specific.test.ts # Run specific test
 ```
 
+### TUI Regression Harness (tmux)
+
+```bash
+scripts/tui-regression.sh --update  # Record snapshot
+scripts/tui-regression.sh           # Compare to snapshot
+```
+
+Uses `packages/coding-agent/test/fixtures/tui-regression.jsonl` and a temporary agent config to capture a deterministic 80x24 TUI snapshot in tmux.
+
 ## Project Structure
 
 ```

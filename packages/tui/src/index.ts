@@ -81,12 +81,15 @@ export {
 	CURSOR_MARKER,
 	type Focusable,
 	isFocusable,
+	isViewportAware,
 	type OverlayAnchor,
 	type OverlayHandle,
 	type OverlayMargin,
 	type OverlayOptions,
 	type SizeValue,
 	TUI,
+	type ViewportInfo,
+	type ViewportRenderResult,
 } from "./tui.js";
 // Utilities
 export { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "./utils.js";

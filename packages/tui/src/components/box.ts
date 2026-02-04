@@ -1,4 +1,4 @@
-import type { Component } from "../tui.js";
+import { type Component, isViewportAware, type ViewportInfo, type ViewportRenderResult } from "../tui.js";
 import { applyBackgroundToLine, visibleWidth } from "../utils.js";
 
 type RenderCache = {
@@ -69,6 +69,65 @@ export class Box implements Component {
 		for (const child of this.children) {
 			child.invalidate?.();
 		}
+	}
+
+	renderViewport(width: number, viewport: ViewportInfo): ViewportRenderResult {
+		if (this.children.length === 0) {
+			return { lines: [], contentHeight: 0 };
+		}
+
+		const contentWidth = Math.max(1, width - this.paddingX * 2);
+		const leftPad = " ".repeat(this.paddingX);
+
+		const childLines: string[] = [];
+		let contentHeight = 0;
+		for (const child of this.children) {
+			const childViewport: ViewportInfo = {
+				...viewport,
+				width: contentWidth,
+				top: Math.max(0, viewport.top - this.paddingY - contentHeight),
+			};
+			if (isViewportAware(child)) {
+				const result = child.renderViewport(contentWidth, childViewport);
+				for (const line of result.lines) {
+					childLines.push(leftPad + line);
+				}
+				contentHeight += Math.max(result.contentHeight, result.lines.length);
+			} else {
+				const lines = child.render(contentWidth);
+				for (const line of lines) {
+					childLines.push(leftPad + line);
+				}
+				contentHeight += lines.length;
+			}
+		}
+
+		if (childLines.length === 0) {
+			return { lines: [], contentHeight: 0 };
+		}
+
+		const bgSample = this.bgFn ? this.bgFn("test") : undefined;
+		if (this.matchCache(width, childLines, bgSample)) {
+			return { lines: this.cache!.lines, contentHeight: this.cache!.lines.length };
+		}
+
+		const result: string[] = [];
+
+		for (let i = 0; i < this.paddingY; i++) {
+			result.push(this.applyBg("", width));
+		}
+
+		for (const line of childLines) {
+			result.push(this.applyBg(line, width));
+		}
+
+		for (let i = 0; i < this.paddingY; i++) {
+			result.push(this.applyBg("", width));
+		}
+
+		this.cache = { childLines, width, bgSample, lines: result };
+
+		return { lines: result, contentHeight: result.length };
 	}
 
 	render(width: number): string[] {

@@ -223,14 +223,18 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 		// Navigation
 		if (kb.matches(data, "selectUp")) {
 			if (this.filteredItems.length === 0) return;
-			this.selectedIndex = this.selectedIndex === 0 ? this.filteredItems.length - 1 : this.selectedIndex - 1;
-			this.updateList();
+			if (this.selectedIndex > 0) {
+				this.selectedIndex -= 1;
+				this.updateList();
+			}
 			return;
 		}
 		if (kb.matches(data, "selectDown")) {
 			if (this.filteredItems.length === 0) return;
-			this.selectedIndex = this.selectedIndex === this.filteredItems.length - 1 ? 0 : this.selectedIndex + 1;
-			this.updateList();
+			if (this.selectedIndex < this.filteredItems.length - 1) {
+				this.selectedIndex += 1;
+				this.updateList();
+			}
 			return;
 		}
 

@@ -149,15 +149,21 @@ export class SelectList implements Component {
 
 	handleInput(keyData: string): void {
 		const kb = getEditorKeybindings();
-		// Up arrow - wrap to bottom when at top
+		// Up arrow - clamp at top
 		if (kb.matches(keyData, "selectUp")) {
-			this.selectedIndex = this.selectedIndex === 0 ? this.filteredItems.length - 1 : this.selectedIndex - 1;
-			this.notifySelectionChange();
+			if (this.filteredItems.length === 0) return;
+			if (this.selectedIndex > 0) {
+				this.selectedIndex -= 1;
+				this.notifySelectionChange();
+			}
 		}
-		// Down arrow - wrap to top when at bottom
+		// Down arrow - clamp at bottom
 		else if (kb.matches(keyData, "selectDown")) {
-			this.selectedIndex = this.selectedIndex === this.filteredItems.length - 1 ? 0 : this.selectedIndex + 1;
-			this.notifySelectionChange();
+			if (this.filteredItems.length === 0) return;
+			if (this.selectedIndex < this.filteredItems.length - 1) {
+				this.selectedIndex += 1;
+				this.notifySelectionChange();
+			}
 		}
 		// Enter
 		else if (kb.matches(keyData, "selectConfirm")) {

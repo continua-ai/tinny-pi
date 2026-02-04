@@ -24,6 +24,10 @@ export type AppAction =
 	| "cycleModelBackward"
 	| "selectModel"
 	| "expandTools"
+	| "toggleBlocks"
+	| "cycleBlockFilter"
+	| "blockActions"
+	| "commandPalette"
 	| "toggleThinking"
 	| "toggleSessionNamedFilter"
 	| "externalEditor"
@@ -59,6 +63,10 @@ export const DEFAULT_APP_KEYBINDINGS: Record<AppAction, KeyId | KeyId[]> = {
 	cycleModelBackward: "shift+ctrl+p",
 	selectModel: "ctrl+l",
 	expandTools: "ctrl+o",
+	toggleBlocks: "shift+ctrl+o",
+	cycleBlockFilter: "shift+ctrl+f",
+	blockActions: "shift+ctrl+a",
+	commandPalette: "shift+ctrl+k",
 	toggleThinking: "ctrl+t",
 	toggleSessionNamedFilter: "ctrl+n",
 	externalEditor: "ctrl+g",
@@ -89,6 +97,10 @@ const APP_ACTIONS: AppAction[] = [
 	"cycleModelBackward",
 	"selectModel",
 	"expandTools",
+	"toggleBlocks",
+	"cycleBlockFilter",
+	"blockActions",
+	"commandPalette",
 	"toggleThinking",
 	"toggleSessionNamedFilter",
 	"externalEditor",
