@@ -8,6 +8,11 @@
   <a href="https://www.npmjs.com/package/@mariozechner/pi-coding-agent"><img alt="npm" src="https://img.shields.io/npm/v/@mariozechner/pi-coding-agent?style=flat-square" /></a>
   <a href="https://github.com/badlogic/pi-mono/actions/workflows/ci.yml"><img alt="Build status" src="https://img.shields.io/github/actions/workflow/status/badlogic/pi-mono/ci.yml?style=flat-square&branch=main" /></a>
 </p>
+<p align="center">
+  <a href="https://pi.dev">pi.dev</a> domain graciously donated by
+  <br /><br />
+  <a href="https://exe.dev"><img src="docs/images/exy.png" alt="Exy mascot" width="48" /><br />exe.dev</a>
+</p>
 
 Pi is a minimal terminal coding harness. Adapt pi to your workflows, not the other way around, without having to fork and modify pi internals. Extend it with TypeScript [Extensions](#extensions), [Skills](#skills), [Prompt Templates](#prompt-templates), and [Themes](#themes). Put your extensions, skills, prompt templates, and themes in [Pi Packages](#pi-packages) and share them with others via npm or git.
 
@@ -45,13 +50,6 @@ Pi runs in four modes: interactive, print or JSON, RPC for process integration, 
 
 ```bash
 npm install -g @mariozechner/pi-coding-agent
-```
-
-**Coexistence note:** This package installs both `pi` and `tinny-pi`. If you need an upstream `pi` install and this fork side by side, install them into different prefixes and call the binaries by path (or adjust PATH order), for example:
-
-```bash
-npm install -g @mariozechner/pi-coding-agent --prefix ~/.local/tinny
-npm install -g @mariozechner/pi-coding-agent --prefix ~/.local/pi
 ```
 
 Authenticate with an API key:
