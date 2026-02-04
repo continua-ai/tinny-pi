@@ -102,7 +102,7 @@ export const ENV_AGENT_DIR = `${ENV_PREFIX}_CODING_AGENT_DIR`;
 export const ENV_PACKAGE_DIR = `${ENV_PREFIX}_PACKAGE_DIR`;
 export const ENV_SHARE_VIEWER_URL = `${ENV_PREFIX}_SHARE_VIEWER_URL`;
 
-const DEFAULT_SHARE_VIEWER_URL = "https://buildwithpi.ai/session/";
+const DEFAULT_SHARE_VIEWER_URL = "https://pi.dev/session/";
 
 /** Get the share viewer URL for a gist ID */
 export function getShareViewerUrl(gistId: string): string {
