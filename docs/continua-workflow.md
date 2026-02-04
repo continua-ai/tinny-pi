@@ -19,6 +19,13 @@ This document captures how we keep `continua-ai/tinny-pi` clean and easy to sync
 - Always run `npm run check` after code changes.
 - For substantial changes, run the full test suite (`npm run test`) unless explicitly waived.
 
+## Local install (avoid clobbering upstream)
+
+- Build first: `npm install` then `npm run build` (or build the dependent workspaces).
+- Install to an isolated prefix: `npm install -g --prefix ~/.tinny-pi ./packages/coding-agent`.
+- Run via `~/.tinny-pi/bin/pi` or `alias tinny-pi="$HOME/.tinny-pi/bin/pi"`.
+- Do not run `npm install -g ./packages/coding-agent` without `--prefix` (it overwrites upstream `pi`).
+
 ## Changelog policy
 
 - Update `packages/*/CHANGELOG.md` only **after** the upstream sync.
