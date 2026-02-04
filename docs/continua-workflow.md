@@ -14,6 +14,11 @@ This document captures how we keep `continua-ai/tinny-pi` clean and easy to sync
 - Do not push directly to `main` or bypass branch protections.
 - Push branches to the `tinny` remote; `origin` is upstream (`badlogic/pi-mono`) and must remain fetch-only.
 
+## Testing policy
+
+- Always run `npm run check` after code changes.
+- For substantial changes, run the full test suite (`npm run test`) unless explicitly waived.
+
 ## Changelog policy
 
 - Update `packages/*/CHANGELOG.md` only **after** the upstream sync.
