@@ -16,9 +16,9 @@
  {"name":"tinny-pi"}
 
 
- [cwd ~/tui-workspace] [branch main] [diff 1...
+ [cwd ~/.pi-tui-regression-workspace] [branch main] [diff 1 file +4 -1]
 ────────────────────────────────────────────────────────────────────────────────
 
 ────────────────────────────────────────────────────────────────────────────────
-~/tui-workspace (main)
+~/.pi-tui-regression-workspace (main)
 ↑2 ↓2 0.0%/200k (auto)                          claude-sonnet-4-5 • thinking off
