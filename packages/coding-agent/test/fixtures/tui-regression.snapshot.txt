@@ -16,9 +16,9 @@
  {"name":"tinny-pi"}
 
 
- [cwd ~/src/tinny-pi/compaction-results/tui-workspace] [branch main] [diff 1...
+ [cwd ~/tui-workspace] [branch main] [diff 1...
 ────────────────────────────────────────────────────────────────────────────────
 
 ────────────────────────────────────────────────────────────────────────────────
-~/src/tinny-pi/compaction-results/tui-workspace (main)
+~/tui-workspace (main)
 ↑2 ↓2 0.0%/200k (auto)                          claude-sonnet-4-5 • thinking off
