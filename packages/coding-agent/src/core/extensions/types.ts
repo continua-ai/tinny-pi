@@ -679,6 +679,29 @@ export type ToolResultEvent =
 	| LsToolResultEvent
 	| CustomToolResultEvent;
 
+export interface ToolExecutionStartEvent {
+	type: "tool_execution_start";
+	toolCallId: string;
+	toolName: string;
+	args: Record<string, unknown>;
+}
+
+export interface ToolExecutionUpdateEvent {
+	type: "tool_execution_update";
+	toolCallId: string;
+	toolName: string;
+	args: Record<string, unknown>;
+	partialResult: AgentToolResult<unknown>;
+}
+
+export interface ToolExecutionEndEvent {
+	type: "tool_execution_end";
+	toolCallId: string;
+	toolName: string;
+	result: AgentToolResult<unknown>;
+	isError: boolean;
+}
+
 // Type guards for ToolResultEvent
 export function isBashToolResult(e: ToolResultEvent): e is BashToolResultEvent {
 	return e.toolName === "bash";
@@ -751,7 +774,10 @@ export type ExtensionEvent =
 	| UserBashEvent
 	| InputEvent
 	| ToolCallEvent
-	| ToolResultEvent;
+	| ToolResultEvent
+	| ToolExecutionStartEvent
+	| ToolExecutionUpdateEvent
+	| ToolExecutionEndEvent;
 
 // ============================================================================
 // Event Results
@@ -881,6 +907,9 @@ export interface ExtensionAPI {
 	on(event: "model_select", handler: ExtensionHandler<ModelSelectEvent>): void;
 	on(event: "tool_call", handler: ExtensionHandler<ToolCallEvent, ToolCallEventResult>): void;
 	on(event: "tool_result", handler: ExtensionHandler<ToolResultEvent, ToolResultEventResult>): void;
+	on(event: "tool_execution_start", handler: ExtensionHandler<ToolExecutionStartEvent>): void;
+	on(event: "tool_execution_update", handler: ExtensionHandler<ToolExecutionUpdateEvent>): void;
+	on(event: "tool_execution_end", handler: ExtensionHandler<ToolExecutionEndEvent>): void;
 	on(event: "user_bash", handler: ExtensionHandler<UserBashEvent, UserBashEventResult>): void;
 	on(event: "input", handler: ExtensionHandler<InputEvent, InputEventResult>): void;
 
