@@ -25,6 +25,8 @@
 - Added command palette entries for current-session history and session-wide command search.
 - Added block action navigation to jump to the start or end of a block in Continua UI mode.
 - Added extension events for tool execution start/update/end to observe streaming tool output.
+- Added running tool status badges with elapsed time, output rate, and output tail in block headers.
+- Added a block action to share a session snapshot up to the selected block.
 
 ### Changed
 

@@ -60,6 +60,8 @@ import {
 } from "../../config.js";
 import { type AgentSession, type AgentSessionEvent, parseSkillBlock } from "../../core/agent-session.js";
 import type { CompactionResult } from "../../core/compaction/index.js";
+import { exportSessionToHtml, type ToolHtmlRenderer } from "../../core/export-html/index.js";
+import { createToolHtmlRenderer } from "../../core/export-html/tool-renderer.js";
 import type {
 	ExtensionContext,
 	ExtensionRunner,
@@ -74,7 +76,7 @@ import { resolveModelScope } from "../../core/model-resolver.js";
 import type { ResourceDiagnostic } from "../../core/resource-loader.js";
 import { type SessionContext, SessionManager } from "../../core/session-manager.js";
 import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.js";
-import type { TruncationResult } from "../../core/tools/truncate.js";
+import { formatSize, type TruncationResult } from "../../core/tools/truncate.js";
 import type { BlockOutputFilter } from "../../utils/block-output-filter.js";
 import { getChangelogPath, getNewEntries, parseChangelog } from "../../utils/changelog.js";
 import { copyToClipboard } from "../../utils/clipboard.js";
@@ -186,6 +188,18 @@ function isOutputFilterTarget(obj: unknown): obj is OutputFilterTarget {
 	);
 }
 
+type OutputStats = { byteCount: number; lineCount: number; lastLine?: string };
+
+interface OutputStatsTarget {
+	getOutputStats(): OutputStats;
+}
+
+function isOutputStatsTarget(obj: unknown): obj is OutputStatsTarget {
+	return (
+		typeof obj === "object" && obj !== null && "getOutputStats" in obj && typeof obj.getOutputStats === "function"
+	);
+}
+
 interface BlockTextTarget {
 	getBlockText(): string;
 }
@@ -211,6 +225,8 @@ type BlockActionTarget = {
 	kind: BlockActionKind;
 	label: string;
 	component: Component;
+	message?: AgentMessage;
+	entryId?: string;
 	text?: string;
 	toolName?: string;
 	toolArgs?: unknown;
@@ -313,6 +329,9 @@ export class InteractiveMode {
 	private blockCollapseState = new Map<string, boolean>();
 	private toolExpandState = new Map<string, boolean>();
 	private toolTargetByCallId = new Map<string, BlockActionTarget>();
+	private entryIdByMessage = new Map<AgentMessage, string>();
+	private toolResultEntryByCallId = new Map<string, string>();
+	private toolStatusTimer: ReturnType<typeof setInterval> | undefined = undefined;
 	private streamingBlockTarget: BlockActionTarget | undefined = undefined;
 
 	// Thinking block visibility state
@@ -2355,6 +2374,8 @@ export class InteractiveMode {
 						kind: "assistant",
 						label: this.formatAssistantLabel(event.message),
 						component: this.streamingComponent,
+						message: event.message,
+						entryId: this.getEntryIdForMessage(event.message),
 						text: this.getAssistantMessageText(event.message),
 						timestamp: event.message.timestamp,
 					});
@@ -2391,10 +2412,11 @@ export class InteractiveMode {
 									component.setExpanded(this.toolOutputExpanded);
 									this.chatContainer.addChild(component);
 									this.pendingTools.set(content.id, component);
-									this.registerBlockActionTarget({
+									const target = this.registerBlockActionTarget({
 										kind: "tool",
 										label: this.formatToolLabel(content.name),
 										component,
+										entryId: this.getToolEntryId(content.id, this.streamingBlockTarget?.entryId),
 										toolName: content.name,
 										toolArgs: content.arguments,
 										toolCallId: content.id,
@@ -2402,6 +2424,7 @@ export class InteractiveMode {
 										startedAt: Date.now(),
 										status: "running",
 									});
+									this.setBlockRunStatus(target, "running", { startedAt: Date.now() });
 								} else {
 									const component = this.pendingTools.get(content.id);
 									if (component) {
@@ -2419,8 +2442,22 @@ export class InteractiveMode {
 				}
 				break;
 
-			case "message_end":
-				if (event.message.role === "user") break;
+			case "message_end": {
+				if (event.message.role === "toolResult") {
+					const entryId = this.recordMessageEntryId(event.message);
+					if (entryId) {
+						const target = this.toolTargetByCallId.get(event.message.toolCallId);
+						if (target) {
+							target.entryId = entryId;
+						}
+					}
+					break;
+				}
+				if (event.message.role === "user") {
+					const entryId = this.recordMessageEntryId(event.message);
+					this.updateBlockTargetEntryId(event.message, entryId);
+					break;
+				}
 				if (this.streamingComponent && event.message.role === "assistant") {
 					this.streamingMessage = event.message;
 					let errorMessage: string | undefined;
@@ -2454,10 +2491,15 @@ export class InteractiveMode {
 							component.setArgsComplete();
 						}
 					}
+					const entryId = this.recordMessageEntryId(this.streamingMessage);
 					if (this.streamingBlockTarget) {
 						this.streamingBlockTarget.label = this.formatAssistantLabel(this.streamingMessage);
 						this.streamingBlockTarget.text = this.getAssistantMessageText(this.streamingMessage);
+						this.streamingBlockTarget.entryId = entryId;
 						this.streamingBlockTarget = undefined;
+					}
+					if (entryId) {
+						this.applyPendingToolEntryIds(entryId);
 					}
 					this.streamingComponent = undefined;
 					this.streamingMessage = undefined;
@@ -2465,6 +2507,7 @@ export class InteractiveMode {
 				}
 				this.ui.requestRender();
 				break;
+			}
 
 			case "tool_execution_start": {
 				if (!this.shouldRenderToolBlocks()) {
@@ -2489,6 +2532,7 @@ export class InteractiveMode {
 						kind: "tool",
 						label: this.formatToolLabel(event.toolName),
 						component,
+						entryId: this.getToolEntryId(event.toolCallId, this.streamingBlockTarget?.entryId),
 						toolName: event.toolName,
 						toolArgs: event.args,
 						toolCallId: event.toolCallId,
@@ -2504,6 +2548,7 @@ export class InteractiveMode {
 				const component = this.pendingTools.get(event.toolCallId);
 				if (component) {
 					component.updateResult({ ...event.partialResult, isError: false }, true);
+					this.refreshRunningToolBadges();
 					this.ui.requestRender();
 				}
 				break;
@@ -2688,6 +2733,73 @@ export class InteractiveMode {
 		return `Tool • ${toolName}`;
 	}
 
+	private rebuildEntryIndex(): void {
+		this.entryIdByMessage.clear();
+		this.toolResultEntryByCallId.clear();
+		const branchEntries = this.sessionManager.getBranch();
+		for (const entry of branchEntries) {
+			if (entry.type !== "message") continue;
+			this.entryIdByMessage.set(entry.message, entry.id);
+			if (entry.message.role === "toolResult" && entry.message.toolCallId) {
+				this.toolResultEntryByCallId.set(entry.message.toolCallId, entry.id);
+			}
+		}
+	}
+
+	private recordMessageEntryId(message: AgentMessage): string | undefined {
+		const entries = this.sessionManager.getEntries();
+		for (let i = entries.length - 1; i >= 0; i--) {
+			const entry = entries[i];
+			if (entry.type !== "message") continue;
+			if (entry.message !== message) continue;
+			this.entryIdByMessage.set(message, entry.id);
+			if (message.role === "toolResult" && message.toolCallId) {
+				this.toolResultEntryByCallId.set(message.toolCallId, entry.id);
+			}
+			return entry.id;
+		}
+		return undefined;
+	}
+
+	private updateBlockTargetEntryId(message: AgentMessage, entryId: string | undefined): void {
+		if (!entryId) return;
+		for (const target of this.blockActionTargets) {
+			if (target.message === message) {
+				target.entryId = entryId;
+			}
+		}
+	}
+
+	private getEntryIdForMessage(message: AgentMessage): string | undefined {
+		return this.entryIdByMessage.get(message);
+	}
+
+	private getToolEntryId(toolCallId: string, fallback?: string): string | undefined {
+		return this.toolResultEntryByCallId.get(toolCallId) ?? fallback;
+	}
+
+	private applyPendingToolEntryIds(entryId: string): void {
+		for (const toolCallId of this.pendingTools.keys()) {
+			const target = this.toolTargetByCallId.get(toolCallId);
+			if (target && !target.entryId) {
+				target.entryId = entryId;
+			}
+		}
+	}
+
+	private findLatestBashEntryId(command: string): string | undefined {
+		const entries = this.sessionManager.getEntries();
+		for (let i = entries.length - 1; i >= 0; i--) {
+			const entry = entries[i];
+			if (entry.type !== "message") continue;
+			if (entry.message.role !== "bashExecution") continue;
+			if (entry.message.command !== command) continue;
+			this.entryIdByMessage.set(entry.message, entry.id);
+			return entry.id;
+		}
+		return undefined;
+	}
+
 	private resetBlockActionTargets(): void {
 		this.blockActionTargets = [];
 		this.blockActionTargetById.clear();
@@ -2697,6 +2809,9 @@ export class InteractiveMode {
 		this.blockCollapseState.clear();
 		this.toolExpandState.clear();
 		this.toolTargetByCallId.clear();
+		this.entryIdByMessage.clear();
+		this.toolResultEntryByCallId.clear();
+		this.clearToolStatusTimer();
 		this.streamingBlockTarget = undefined;
 	}
 
@@ -2741,6 +2856,8 @@ export class InteractiveMode {
 			}
 		}
 		target.status = status;
+		this.applyBlockHeaderState(target);
+		this.updateToolStatusTimer();
 	}
 
 	private setToolRunStart(toolCallId: string, startedAt = Date.now()): void {
@@ -2755,6 +2872,86 @@ export class InteractiveMode {
 		this.setBlockRunStatus(target, status, { endedAt });
 	}
 
+	private clearToolStatusTimer(): void {
+		if (this.toolStatusTimer) {
+			clearInterval(this.toolStatusTimer);
+			this.toolStatusTimer = undefined;
+		}
+	}
+
+	private updateToolStatusTimer(): void {
+		const hasRunning = this.blockActionTargets.some(
+			(target) =>
+				target.kind === "tool" &&
+				target.status === "running" &&
+				this.chatContainer.children.includes(target.component),
+		);
+		if (hasRunning && !this.toolStatusTimer) {
+			this.toolStatusTimer = setInterval(() => {
+				this.refreshRunningToolBadges();
+			}, 1000);
+		} else if (!hasRunning && this.toolStatusTimer) {
+			this.clearToolStatusTimer();
+		}
+	}
+
+	private refreshRunningToolBadges(): void {
+		let updated = false;
+		for (const target of this.blockActionTargets) {
+			if (target.kind !== "tool" || target.status !== "running") continue;
+			if (!isHeaderBadgeTarget(target.component)) continue;
+			target.component.setHeaderBadge(this.getHeaderBadge(target));
+			updated = true;
+		}
+		if (updated) {
+			this.ui.requestRender();
+		}
+	}
+
+	private getToolOutputStats(target: BlockActionTarget): OutputStats | undefined {
+		if (!isOutputStatsTarget(target.component)) return undefined;
+		return target.component.getOutputStats();
+	}
+
+	private formatOutputTail(text: string | undefined): string | undefined {
+		if (!text) return undefined;
+		const summary = this.formatBlockSummary(text);
+		if (!summary) return undefined;
+		const maxLength = 40;
+		return summary.length > maxLength ? `${summary.slice(0, maxLength - 3)}...` : summary;
+	}
+
+	private formatOutputRate(byteCount: number, elapsedMs: number): string | undefined {
+		if (byteCount <= 0 || elapsedMs <= 0) return undefined;
+		const rate = byteCount / (elapsedMs / 1000);
+		if (!Number.isFinite(rate) || rate <= 0) return undefined;
+		return `${formatSize(Math.round(rate))}/s`;
+	}
+
+	private getRunningToolBadge(target: BlockActionTarget): string | undefined {
+		if (target.kind !== "tool" || target.status !== "running") return undefined;
+		if (target.startedAt === undefined) return undefined;
+		const elapsedMs = Date.now() - target.startedAt;
+		const elapsed = this.formatDuration(elapsedMs);
+		const stats = this.getToolOutputStats(target);
+		const parts: string[] = [`running ${elapsed}`];
+		const rate = stats ? this.formatOutputRate(stats.byteCount, elapsedMs) : undefined;
+		if (rate) parts.push(rate);
+		const tail = stats ? this.formatOutputTail(stats.lastLine) : undefined;
+		if (tail) parts.push(`tail: ${tail}`);
+		return theme.fg("muted", `[${parts.join(" · ")}] `);
+	}
+
+	private getHeaderBadge(target: BlockActionTarget): string | undefined {
+		const parts: string[] = [];
+		const bookmark = this.getBookmarkBadge(target.id);
+		if (bookmark) parts.push(bookmark);
+		const runningBadge = this.getRunningToolBadge(target);
+		if (runningBadge) parts.push(runningBadge);
+		if (parts.length === 0) return undefined;
+		return parts.join("");
+	}
+
 	private getBookmarkBadge(targetId: string): string | undefined {
 		if (!this.blockBookmarks.has(targetId)) return undefined;
 		return theme.fg("accent", "★ ");
@@ -2766,7 +2963,7 @@ export class InteractiveMode {
 			target.component.setHeaderMarker(marker);
 		}
 		if (isHeaderBadgeTarget(target.component)) {
-			target.component.setHeaderBadge(this.getBookmarkBadge(target.id));
+			target.component.setHeaderBadge(this.getHeaderBadge(target));
 		}
 	}
 
@@ -3249,6 +3446,12 @@ export class InteractiveMode {
 			add("jump-block-end", "Jump to block end", () => this.scrollToBlock(target.id, "end"));
 		}
 
+		if (this.getShareEntryId(target)) {
+			add("share-snapshot", "Share session snapshot", () => {
+				void this.shareBlockSnapshot(target);
+			});
+		}
+
 		if (target.kind === "user" || target.kind === "assistant") {
 			if (target.text?.trim()) {
 				add("copy-text", "Copy message text", () => this.copyBlockText(target.text ?? "", "message text"));
@@ -3727,6 +3930,7 @@ export class InteractiveMode {
 		if (!this.shouldRenderMessage(message)) return;
 		switch (message.role) {
 			case "bashExecution": {
+				const entryId = this.getEntryIdForMessage(message);
 				const component = new BashExecutionComponent(message.command, this.ui, message.excludeFromContext);
 				if (message.output) {
 					component.appendOutput(message.output);
@@ -3749,6 +3953,8 @@ export class InteractiveMode {
 					kind: "tool",
 					label: this.formatToolLabel("bash"),
 					component,
+					message,
+					entryId,
 					toolName: "bash",
 					toolArgs: { command: message.command },
 					timestamp: message.timestamp,
@@ -3781,6 +3987,7 @@ export class InteractiveMode {
 			}
 			case "user": {
 				const textContent = this.getUserMessageText(message);
+				const entryId = this.getEntryIdForMessage(message);
 				if (textContent) {
 					this.beginUserTurn();
 					const skillBlock = parseSkillBlock(textContent);
@@ -3806,6 +4013,8 @@ export class InteractiveMode {
 								kind: "user",
 								label: "User",
 								component: userComponent,
+								message,
+								entryId,
 								text: userMessage,
 								timestamp: message.timestamp,
 							});
@@ -3818,6 +4027,8 @@ export class InteractiveMode {
 							kind: "user",
 							label: "User",
 							component: userComponent,
+							message,
+							entryId,
 							text: textContent,
 							timestamp: message.timestamp,
 						});
@@ -3829,6 +4040,7 @@ export class InteractiveMode {
 				break;
 			}
 			case "assistant": {
+				const entryId = this.getEntryIdForMessage(message);
 				const assistantComponent = new AssistantMessageComponent(
 					message,
 					this.hideThinkingBlock,
@@ -3840,6 +4052,8 @@ export class InteractiveMode {
 					kind: "assistant",
 					label: this.formatAssistantLabel(message),
 					component: assistantComponent,
+					message,
+					entryId,
 					text: this.getAssistantMessageText(message),
 					timestamp: message.timestamp,
 				});
@@ -3868,6 +4082,7 @@ export class InteractiveMode {
 		this.pendingTools.clear();
 		this.resetTurnIndex();
 		this.resetBlockActionTargets();
+		this.rebuildEntryIndex();
 
 		if (options.updateFooter) {
 			this.footer.invalidate();
@@ -3881,6 +4096,7 @@ export class InteractiveMode {
 			}
 			// Assistant messages need special handling for tool calls
 			if (message.role === "assistant") {
+				const assistantEntryId = this.getEntryIdForMessage(message);
 				this.addMessageToChat(message);
 				if (this.shouldRenderToolBlocks()) {
 					// Render tool call components
@@ -3900,6 +4116,7 @@ export class InteractiveMode {
 								kind: "tool",
 								label: this.formatToolLabel(content.name),
 								component,
+								entryId: this.getToolEntryId(content.id, assistantEntryId),
 								toolName: content.name,
 								toolArgs: content.arguments,
 								toolCallId: content.id,
@@ -3907,6 +4124,7 @@ export class InteractiveMode {
 								startedAt: message.timestamp,
 								status: "running",
 							});
+							this.setBlockRunStatus(target, "running", { startedAt: message.timestamp });
 
 							if (message.stopReason === "aborted" || message.stopReason === "error") {
 								let errorMessage: string;
@@ -4187,6 +4405,8 @@ export class InteractiveMode {
 				kind: "assistant",
 				label: this.formatAssistantLabel(this.streamingMessage),
 				component: this.streamingComponent,
+				message: this.streamingMessage,
+				entryId: this.getEntryIdForMessage(this.streamingMessage),
 				text: this.getAssistantMessageText(this.streamingMessage),
 				timestamp: this.streamingMessage.timestamp,
 			});
@@ -4245,10 +4465,11 @@ export class InteractiveMode {
 			component.setExpanded(this.toolOutputExpanded);
 			this.chatContainer.addChild(component);
 			this.pendingTools.set(content.id, component);
-			this.registerBlockActionTarget({
+			const target = this.registerBlockActionTarget({
 				kind: "tool",
 				label: this.formatToolLabel(content.name),
 				component,
+				entryId: this.getToolEntryId(content.id, this.streamingBlockTarget?.entryId),
 				toolName: content.name,
 				toolArgs: content.arguments,
 				toolCallId: content.id,
@@ -4256,6 +4477,7 @@ export class InteractiveMode {
 				startedAt: Date.now(),
 				status: "running",
 			});
+			this.setBlockRunStatus(target, "running", { startedAt: Date.now() });
 		}
 	}
 
@@ -4277,6 +4499,8 @@ export class InteractiveMode {
 				kind: "assistant",
 				label: this.formatAssistantLabel(this.streamingMessage),
 				component: this.streamingComponent,
+				message: this.streamingMessage,
+				entryId: this.getEntryIdForMessage(this.streamingMessage),
 				text: this.getAssistantMessageText(this.streamingMessage),
 				timestamp: this.streamingMessage.timestamp,
 			});
@@ -4570,6 +4794,10 @@ export class InteractiveMode {
 					startedAt,
 					status,
 				});
+				const entryId = this.findLatestBashEntryId(component.getCommand());
+				if (entryId) {
+					target.entryId = entryId;
+				}
 				if (meta?.status) {
 					this.setBlockRunStatus(target, meta.status, {
 						startedAt: meta.startedAt,
@@ -5399,7 +5627,37 @@ export class InteractiveMode {
 		}
 	}
 
-	private async handleShareCommand(): Promise<void> {
+	private getToolHtmlRenderer(): ToolHtmlRenderer | undefined {
+		const runner = this.session.extensionRunner;
+		if (!runner) return undefined;
+		return createToolHtmlRenderer({
+			getToolDefinition: (name) => runner.getToolDefinition(name),
+			theme,
+		});
+	}
+
+	private async exportSessionHtml(sessionManager: SessionManager, outputPath: string): Promise<string> {
+		const themeName = this.settingsManager.getTheme();
+		const toolRenderer = this.getToolHtmlRenderer();
+		return exportSessionToHtml(sessionManager, this.session.state, {
+			outputPath,
+			themeName,
+			toolRenderer,
+		});
+	}
+
+	private getShareEntryId(target: BlockActionTarget): string | undefined {
+		if (target.entryId) return target.entryId;
+		if (target.toolCallId) {
+			return this.toolResultEntryByCallId.get(target.toolCallId);
+		}
+		if (target.message) {
+			return this.getEntryIdForMessage(target.message);
+		}
+		return undefined;
+	}
+
+	private async shareHtmlFile(htmlPath: string, options?: { label?: string; cleanupPaths?: string[] }): Promise<void> {
 		// Check if gh is available and logged in
 		try {
 			const authResult = spawnSync("gh", ["auth", "status"], { encoding: "utf-8" });
@@ -5412,31 +5670,25 @@ export class InteractiveMode {
 			return;
 		}
 
-		// Export to a temp file
-		const tmpFile = path.join(os.tmpdir(), "session.html");
-		try {
-			await this.session.exportToHtml(tmpFile);
-		} catch (error: unknown) {
-			this.showError(`Failed to export session: ${error instanceof Error ? error.message : "Unknown error"}`);
-			return;
-		}
-
-		// Show cancellable loader, replacing the editor
-		const loader = new BorderedLoader(this.ui, theme, "Creating gist...");
+		const label = options?.label ? `Creating gist (${options.label})...` : "Creating gist...";
+		const loader = new BorderedLoader(this.ui, theme, label);
 		this.editorContainer.clear();
 		this.editorContainer.addChild(loader);
 		this.ui.setFocus(loader);
 		this.ui.requestRender();
 
+		const cleanupPaths = [htmlPath, ...(options?.cleanupPaths ?? [])];
 		const restoreEditor = () => {
 			loader.dispose();
 			this.editorContainer.clear();
 			this.editorContainer.addChild(this.editor);
 			this.ui.setFocus(this.editor);
-			try {
-				fs.unlinkSync(tmpFile);
-			} catch {
-				// Ignore cleanup errors
+			for (const filePath of cleanupPaths) {
+				try {
+					fs.unlinkSync(filePath);
+				} catch {
+					// Ignore cleanup errors
+				}
 			}
 		};
 
@@ -5451,7 +5703,7 @@ export class InteractiveMode {
 
 		try {
 			const result = await new Promise<{ stdout: string; stderr: string; code: number | null }>((resolve) => {
-				proc = spawn("gh", ["gist", "create", "--public=false", tmpFile]);
+				proc = spawn("gh", ["gist", "create", "--public=false", htmlPath]);
 				let stdout = "";
 				let stderr = "";
 				proc.stdout?.on("data", (data) => {
@@ -5484,13 +5736,65 @@ export class InteractiveMode {
 
 			// Create the preview URL
 			const previewUrl = getShareViewerUrl(gistId);
-			this.showStatus(`Share URL: ${previewUrl}\nGist: ${gistUrl}`);
+			const shareLabel = options?.label ? `${options.label} URL` : "Share URL";
+			this.showStatus(`${shareLabel}: ${previewUrl}\nGist: ${gistUrl}`);
 		} catch (error: unknown) {
 			if (!loader.signal.aborted) {
 				restoreEditor();
 				this.showError(`Failed to create gist: ${error instanceof Error ? error.message : "Unknown error"}`);
 			}
 		}
+	}
+
+	private async shareBlockSnapshot(target: BlockActionTarget): Promise<void> {
+		const entryId = this.getShareEntryId(target);
+		if (!entryId) {
+			this.showStatus("Block is not ready to share yet");
+			return;
+		}
+
+		let snapshotFile: string | undefined;
+		try {
+			snapshotFile = this.sessionManager.createBranchedSession(entryId);
+		} catch (error) {
+			this.showError(
+				`Failed to create session snapshot: ${error instanceof Error ? error.message : "Unknown error"}`,
+			);
+			return;
+		}
+
+		if (!snapshotFile) {
+			this.showError("Cannot share an in-memory session. Save the session first.");
+			return;
+		}
+
+		const tmpFile = path.join(os.tmpdir(), `session-snapshot-${Date.now()}.html`);
+		try {
+			const snapshotManager = SessionManager.open(snapshotFile);
+			await this.exportSessionHtml(snapshotManager, tmpFile);
+		} catch (error: unknown) {
+			try {
+				fs.unlinkSync(snapshotFile);
+			} catch {
+				// Ignore cleanup errors
+			}
+			this.showError(`Failed to export snapshot: ${error instanceof Error ? error.message : "Unknown error"}`);
+			return;
+		}
+
+		await this.shareHtmlFile(tmpFile, { label: "Snapshot", cleanupPaths: [snapshotFile] });
+	}
+
+	private async handleShareCommand(): Promise<void> {
+		const tmpFile = path.join(os.tmpdir(), "session.html");
+		try {
+			await this.exportSessionHtml(this.sessionManager, tmpFile);
+		} catch (error: unknown) {
+			this.showError(`Failed to export session: ${error instanceof Error ? error.message : "Unknown error"}`);
+			return;
+		}
+
+		await this.shareHtmlFile(tmpFile, { label: "Session" });
 	}
 
 	private handleCopyCommand(): void {
@@ -5861,6 +6165,7 @@ export class InteractiveMode {
 						startedAt,
 						status: "running",
 					});
+					this.setBlockRunStatus(bashTarget, "running", { startedAt });
 				}
 			}
 
@@ -5887,6 +6192,10 @@ export class InteractiveMode {
 
 			// Record the result in session
 			this.session.recordBashResult(command, result, { excludeFromContext });
+			const entryId = this.findLatestBashEntryId(command);
+			if (bashTarget && entryId) {
+				bashTarget.entryId = entryId;
+			}
 			this.bashComponent = undefined;
 			this.ui.requestRender();
 			return;
@@ -5915,6 +6224,7 @@ export class InteractiveMode {
 					startedAt,
 					status: "running",
 				});
+				this.setBlockRunStatus(bashTarget, "running", { startedAt });
 			}
 			this.ui.requestRender();
 		}
@@ -5925,6 +6235,7 @@ export class InteractiveMode {
 				(chunk) => {
 					if (bashComponent) {
 						bashComponent.appendOutput(chunk);
+						this.refreshRunningToolBadges();
 						this.ui.requestRender();
 					}
 				},
@@ -5938,6 +6249,11 @@ export class InteractiveMode {
 					result.truncated ? ({ truncated: true, content: result.output } as TruncationResult) : undefined,
 					result.fullOutputPath,
 				);
+			}
+
+			const entryId = this.findLatestBashEntryId(command);
+			if (bashTarget && entryId) {
+				bashTarget.entryId = entryId;
 			}
 
 			const endedAt = Date.now();
@@ -6041,6 +6357,7 @@ export class InteractiveMode {
 			clearInterval(this.promptStatusTimer);
 			this.promptStatusTimer = undefined;
 		}
+		this.clearToolStatusTimer();
 		this.footer.dispose();
 		this.footerDataProvider.dispose();
 		if (this.unsubscribe) {

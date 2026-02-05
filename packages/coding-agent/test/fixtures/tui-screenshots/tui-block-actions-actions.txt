@@ -1,4 +1,3 @@
-
  Checking now.
 
 [48;2;40;50;40m [38;2;128;128;128mStep 1 • [39mRead [38;2;138;190;183mpackage.json[38;2;255;255;0m:1-1[39m
@@ -17,6 +16,7 @@
    Add bookmark
    Jump to block start
    Jump to block end
+   Share session snapshot
    Copy read call
    Filter output
    Toggle tool output
