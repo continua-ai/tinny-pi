@@ -1370,7 +1370,7 @@ export class InteractiveMode {
 
 	private handleMouseEvent(event: MouseEvent): void {
 		if (!this.continuaUiEnabled) return;
-		if (event.type !== "button" || event.action !== "press" || event.button !== "left") return;
+		if (event.type !== "button" || event.action !== "press") return;
 		if (this.ui.hasOverlay()) return;
 
 		const marker = this.ui.getLineMarkerAt(event.y);
@@ -1378,6 +1378,13 @@ export class InteractiveMode {
 
 		const target = this.blockActionTargets.find((candidate) => candidate.id === marker);
 		if (!target) return;
+
+		if (event.button === "right") {
+			this.showBlockActionPaletteForTarget(target);
+			return;
+		}
+
+		if (event.button !== "left") return;
 
 		if (target.kind === "tool") {
 			this.toggleToolExpandedForTarget(target);
@@ -2744,6 +2751,32 @@ export class InteractiveMode {
 		}
 
 		return { items, handlers };
+	}
+
+	private showBlockActionPaletteForTarget(target: BlockActionTarget): void {
+		const { items, handlers } = this.buildBlockActionItems(target);
+		if (items.length === 0) {
+			this.showStatus("No actions available for this block");
+			return;
+		}
+
+		this.showSelector((done) => {
+			const palette = new BlockActionPaletteComponent(
+				`Block actions • ${target.label}`,
+				items,
+				(item) => {
+					done();
+					const handler = handlers.get(item.id);
+					if (handler) handler();
+					this.ui.requestRender();
+				},
+				() => {
+					done();
+					this.ui.requestRender();
+				},
+			);
+			return { component: palette, focus: palette };
+		});
 	}
 
 	private showBlockActionPalette(): void {
