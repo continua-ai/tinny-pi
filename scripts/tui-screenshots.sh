@@ -218,6 +218,12 @@ sleep 0.1
 tmux send-keys -t "$SESSION_NAME" Down
 sleep 0.1
 
+tmux send-keys -t "$SESSION_NAME" Down
+sleep 0.1
+
+tmux send-keys -t "$SESSION_NAME" Down
+sleep 0.1
+
 capture_screen "tui-command-palette-selection"
 
 tmux send-keys -t "$SESSION_NAME" Enter

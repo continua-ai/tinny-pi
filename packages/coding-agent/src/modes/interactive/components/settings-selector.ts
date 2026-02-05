@@ -42,6 +42,7 @@ export interface SettingsConfig {
 	quietStartup: boolean;
 	clearOnShrink: boolean;
 	continuaUi?: boolean;
+	mouseTracking?: boolean;
 }
 
 export interface SettingsCallbacks {
@@ -64,6 +65,7 @@ export interface SettingsCallbacks {
 	onQuietStartupChange: (enabled: boolean) => void;
 	onClearOnShrinkChange: (enabled: boolean) => void;
 	onContinuaUiChange?: (enabled: boolean) => void;
+	onMouseTrackingChange?: (enabled: boolean) => void;
 	onCancel: () => void;
 }
 
@@ -337,6 +339,17 @@ export class SettingsSelectorComponent extends Container {
 			values: ["true", "false"],
 		});
 
+		// Mouse tracking toggle (insert after continua-ui)
+		const continuaUiIndex = items.findIndex((item) => item.id === "continua-ui");
+		const mouseTracking = config.mouseTracking ?? false;
+		items.splice(continuaUiIndex + 1, 0, {
+			id: "mouse-tracking",
+			label: "Mouse interactions",
+			description: "Enable mouse scroll/click actions (requires Continua UI; disables terminal selection)",
+			currentValue: mouseTracking ? "true" : "false",
+			values: ["true", "false"],
+		});
+
 		// Add borders
 		this.addChild(new DynamicBorder());
 
@@ -393,6 +406,9 @@ export class SettingsSelectorComponent extends Container {
 						break;
 					case "continua-ui":
 						callbacks.onContinuaUiChange?.(newValue === "true");
+						break;
+					case "mouse-tracking":
+						callbacks.onMouseTrackingChange?.(newValue === "true");
 						break;
 				}
 			},
