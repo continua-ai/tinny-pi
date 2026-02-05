@@ -22,7 +22,7 @@ export interface RetrySettings {
 export interface TerminalSettings {
 	showImages?: boolean; // default: true (only relevant if terminal supports images)
 	clearOnShrink?: boolean; // default: false (clear empty rows when content shrinks)
-	scrollOutputOnly?: boolean; // default: true (keep input/footer pinned while scrolling output)
+	continuaUi?: boolean; // default: true (enable Continua UI enhancements)
 }
 
 export interface ImageSettings {
@@ -207,6 +207,14 @@ export class SettingsManager {
 				settings.skills = skillsSettings.customDirectories;
 			} else {
 				delete settings.skills;
+			}
+		}
+
+		if ("terminal" in settings && typeof settings.terminal === "object" && settings.terminal !== null) {
+			const terminalSettings = settings.terminal as Record<string, unknown>;
+			if (terminalSettings.scrollOutputOnly !== undefined && terminalSettings.continuaUi === undefined) {
+				terminalSettings.continuaUi = terminalSettings.scrollOutputOnly;
+				delete terminalSettings.scrollOutputOnly;
 			}
 		}
 
@@ -670,16 +678,16 @@ export class SettingsManager {
 		this.save();
 	}
 
-	getScrollOutputOnly(): boolean {
-		return this.settings.terminal?.scrollOutputOnly ?? true;
+	getContinuaUi(): boolean {
+		return this.settings.terminal?.continuaUi ?? true;
 	}
 
-	setScrollOutputOnly(enabled: boolean): void {
+	setContinuaUi(enabled: boolean): void {
 		if (!this.globalSettings.terminal) {
 			this.globalSettings.terminal = {};
 		}
-		this.globalSettings.terminal.scrollOutputOnly = enabled;
-		this.markModified("terminal", "scrollOutputOnly");
+		this.globalSettings.terminal.continuaUi = enabled;
+		this.markModified("terminal", "continuaUi");
 		this.save();
 	}
 

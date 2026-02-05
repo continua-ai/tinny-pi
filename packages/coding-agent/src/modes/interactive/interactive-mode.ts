@@ -32,9 +32,11 @@ import {
 	CombinedAutocompleteProvider,
 	type Component,
 	Container,
+	createLineMarker,
 	fuzzyFilter,
 	Loader,
 	Markdown,
+	type MouseEvent,
 	type MouseScrollEvent,
 	matchesKey,
 	ProcessTerminal,
@@ -139,6 +141,16 @@ function isBlockCollapsible(obj: unknown): obj is BlockCollapsible {
 	return typeof obj === "object" && obj !== null && "setCollapsed" in obj && typeof obj.setCollapsed === "function";
 }
 
+interface HeaderMarkerTarget {
+	setHeaderMarker(marker?: string): void;
+}
+
+function isHeaderMarkerTarget(obj: unknown): obj is HeaderMarkerTarget {
+	return (
+		typeof obj === "object" && obj !== null && "setHeaderMarker" in obj && typeof obj.setHeaderMarker === "function"
+	);
+}
+
 type BlockActionKind = "user" | "assistant" | "tool";
 
 type BlockFilterMode = "all" | "no-tools" | "messages";
@@ -233,8 +245,8 @@ export class InteractiveMode {
 	private blockFilterMode: BlockFilterMode = "all";
 	private blockFilterContainer: Container;
 
-	// Output-only scroll state
-	private scrollOutputOnly = false;
+	// Continua UI toggle
+	private continuaUiEnabled = false;
 
 	// Block action palette state
 	private blockActionTargets: BlockActionTarget[] = [];
@@ -323,11 +335,11 @@ export class InteractiveMode {
 		this.version = VERSION;
 		this.ui = new TUI(new ProcessTerminal(), this.settingsManager.getShowHardwareCursor());
 		this.ui.setClearOnShrink(this.settingsManager.getClearOnShrink());
-		this.scrollOutputOnly = this.settingsManager.getScrollOutputOnly();
+		this.continuaUiEnabled = this.settingsManager.getContinuaUi();
 		this.outputContainer = new Container();
 		this.fixedContainer = new Container();
 		this.scrollLayout = new ScrollLayout(this.outputContainer, this.fixedContainer, {
-			scrollEnabled: this.scrollOutputOnly,
+			scrollEnabled: this.continuaUiEnabled,
 		});
 		this.headerContainer = new Container();
 		this.blockFilterContainer = new Container();
@@ -549,7 +561,7 @@ export class InteractiveMode {
 		// Start the UI
 		this.ui.start();
 		this.isInitialized = true;
-		this.applyOutputScrollMode(this.scrollOutputOnly);
+		this.applyOutputScrollMode(this.continuaUiEnabled);
 
 		// Set terminal title
 		this.updateTerminalTitle();
@@ -1334,24 +1346,44 @@ export class InteractiveMode {
 	}
 
 	private applyOutputScrollMode(enabled: boolean, options?: { forceRender?: boolean }): void {
-		this.scrollOutputOnly = enabled;
+		this.continuaUiEnabled = enabled;
 		this.scrollLayout.setScrollEnabled(enabled);
 		this.ui.onScroll = enabled ? (event) => this.handleOutputScroll(event) : undefined;
+		this.ui.onMouse = enabled ? (event) => this.handleMouseEvent(event) : undefined;
 		if (this.isInitialized) {
 			this.ui.setMouseTracking(enabled);
 		}
 		if (enabled) {
 			this.scrollLayout.scrollToBottom();
 		}
+		this.updateBlockHeaderMarkers();
 		if (options?.forceRender) {
 			this.ui.requestRender(true);
 		}
 	}
 
 	private handleOutputScroll(event: MouseScrollEvent): void {
-		if (!this.scrollOutputOnly) return;
+		if (!this.continuaUiEnabled) return;
 		const delta = event.delta * InteractiveMode.OUTPUT_SCROLL_LINES;
 		this.scrollLayout.scrollBy(delta);
+	}
+
+	private handleMouseEvent(event: MouseEvent): void {
+		if (!this.continuaUiEnabled) return;
+		if (event.type !== "button" || event.action !== "press" || event.button !== "left") return;
+		if (this.ui.hasOverlay()) return;
+
+		const marker = this.ui.getLineMarkerAt(event.y);
+		if (!marker) return;
+
+		const target = this.blockActionTargets.find((candidate) => candidate.id === marker);
+		if (!target) return;
+
+		if (target.kind === "tool") {
+			this.toggleToolExpandedForTarget(target);
+		} else {
+			this.toggleBlockCollapsedForTarget(target);
+		}
 	}
 
 	private startPromptStatusUpdates(): void {
@@ -2576,7 +2608,20 @@ export class InteractiveMode {
 				this.toolTargetByCallId.set(fullTarget.toolCallId, fullTarget);
 			}
 		}
+		this.applyBlockHeaderMarker(fullTarget);
 		return fullTarget;
+	}
+
+	private applyBlockHeaderMarker(target: BlockActionTarget): void {
+		if (!isHeaderMarkerTarget(target.component)) return;
+		const marker = this.continuaUiEnabled ? createLineMarker(target.id) : undefined;
+		target.component.setHeaderMarker(marker);
+	}
+
+	private updateBlockHeaderMarkers(): void {
+		for (const target of this.blockActionTargets) {
+			this.applyBlockHeaderMarker(target);
+		}
 	}
 
 	private getLatestBlockActionTarget(): BlockActionTarget | undefined {
@@ -3853,7 +3898,7 @@ export class InteractiveMode {
 					autocompleteMaxVisible: this.settingsManager.getAutocompleteMaxVisible(),
 					quietStartup: this.settingsManager.getQuietStartup(),
 					clearOnShrink: this.settingsManager.getClearOnShrink(),
-					scrollOutputOnly: this.scrollOutputOnly,
+					continuaUi: this.continuaUiEnabled,
 				},
 				{
 					onAutoCompactChange: (enabled) => {
@@ -3946,8 +3991,8 @@ export class InteractiveMode {
 						this.settingsManager.setClearOnShrink(enabled);
 						this.ui.setClearOnShrink(enabled);
 					},
-					onScrollOutputOnlyChange: (enabled) => {
-						this.settingsManager.setScrollOutputOnly(enabled);
+					onContinuaUiChange: (enabled) => {
+						this.settingsManager.setContinuaUi(enabled);
 						this.applyOutputScrollMode(enabled, { forceRender: true });
 					},
 					onCancel: () => {
@@ -4587,7 +4632,7 @@ export class InteractiveMode {
 			}
 			this.ui.setShowHardwareCursor(this.settingsManager.getShowHardwareCursor());
 			this.ui.setClearOnShrink(this.settingsManager.getClearOnShrink());
-			this.applyOutputScrollMode(this.settingsManager.getScrollOutputOnly(), { forceRender: true });
+			this.applyOutputScrollMode(this.settingsManager.getContinuaUi(), { forceRender: true });
 			this.rebuildAutocomplete();
 			const runner = this.session.extensionRunner;
 			if (runner) {

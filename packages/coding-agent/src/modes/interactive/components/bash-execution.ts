@@ -10,7 +10,7 @@ import {
 	type TruncationResult,
 	truncateTail,
 } from "../../../core/tools/truncate.js";
-import { theme } from "../theme/theme.js";
+import { type ThemeColor, theme } from "../theme/theme.js";
 import { DynamicBorder } from "./dynamic-border.js";
 import { editorKey, keyHint } from "./keybinding-hints.js";
 import { truncateToVisualLines } from "./visual-truncate.js";
@@ -20,6 +20,7 @@ const PREVIEW_LINES = 20;
 
 export class BashExecutionComponent extends Container {
 	private command: string;
+	private headerMarker?: string;
 	private outputLines: string[] = [];
 	private status: "running" | "complete" | "cancelled" | "error" = "running";
 	private exitCode: number | undefined = undefined;
@@ -50,7 +51,7 @@ export class BashExecutionComponent extends Container {
 		this.addChild(this.contentContainer);
 
 		// Command header
-		const header = new Text(theme.fg(colorKey, theme.bold(`$ ${command}`)), 1, 0);
+		const header = new Text(this.formatHeaderText(colorKey), 1, 0);
 		this.contentContainer.addChild(header);
 
 		// Loader
@@ -64,6 +65,17 @@ export class BashExecutionComponent extends Container {
 
 		// Bottom border
 		this.addChild(new DynamicBorder(borderColor));
+	}
+
+	setHeaderMarker(marker?: string): void {
+		if (this.headerMarker === marker) return;
+		this.headerMarker = marker;
+		this.updateDisplay();
+	}
+
+	private formatHeaderText(colorKey: ThemeColor): string {
+		const marker = this.headerMarker ?? "";
+		return `${marker}${theme.fg(colorKey, theme.bold(`$ ${this.command}`))}`;
 	}
 
 	/**
@@ -137,7 +149,7 @@ export class BashExecutionComponent extends Container {
 		this.contentContainer.clear();
 
 		// Command header
-		const header = new Text(theme.fg("bashMode", theme.bold(`$ ${this.command}`)), 1, 0);
+		const header = new Text(this.formatHeaderText("bashMode"), 1, 0);
 		this.contentContainer.addChild(header);
 
 		// Output

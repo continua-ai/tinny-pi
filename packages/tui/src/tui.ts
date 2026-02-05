@@ -6,7 +6,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { isKeyRelease, matchesKey } from "./keys.js";
-import { type MouseScrollEvent, parseMouseEvent } from "./mouse.js";
+import { type MouseEvent, type MouseScrollEvent, parseMouseEvent } from "./mouse.js";
 import type { Terminal } from "./terminal.js";
 import { getCapabilities, isImageLine, setCellDimensions } from "./terminal-image.js";
 import { extractSegments, sliceByColumn, sliceWithWidth, visibleWidth } from "./utils.js";
@@ -97,6 +97,11 @@ export function isViewportAware(
  * TUI finds and strips this marker, then positions the hardware cursor there.
  */
 export const CURSOR_MARKER = "\x1b_pi:c\x07";
+export const LINE_MARKER_PREFIX = "\x1b_pi:l:";
+
+export function createLineMarker(id: string): string {
+	return `${LINE_MARKER_PREFIX}${id}\x07`;
+}
 
 export { visibleWidth };
 
@@ -261,6 +266,8 @@ export class TUI extends Container {
 	public onDebug?: () => void;
 	/** Global callback for mouse scroll events. */
 	public onScroll?: (event: MouseScrollEvent) => void;
+	/** Global callback for mouse button events. */
+	public onMouse?: (event: MouseEvent) => void;
 	private renderRequested = false;
 	private cursorRow = 0; // Logical cursor row (end of rendered content)
 	private hardwareCursorRow = 0; // Actual terminal cursor row (may differ due to IME positioning)
@@ -271,6 +278,7 @@ export class TUI extends Container {
 	private mouseTrackingEnabled = false;
 	private maxLinesRendered = 0; // Track terminal's working area (max lines ever rendered)
 	private previousViewportTop = 0; // Track previous viewport top for resize-aware cursor moves
+	private lineMarkers = new Map<number, string>();
 	private fullRedrawCount = 0;
 	private stopped = false;
 
@@ -330,6 +338,10 @@ export class TUI extends Container {
 		if (!this.stopped) {
 			this.terminal.setMouseTracking(enabled);
 		}
+	}
+
+	getLineMarkerAt(row: number): string | undefined {
+		return this.lineMarkers.get(row);
 	}
 
 	setFocus(component: Component | null): void {
@@ -511,8 +523,13 @@ export class TUI extends Container {
 
 		const mouseEvent = parseMouseEvent(data);
 		if (mouseEvent) {
-			if (this.onScroll) {
-				this.onScroll(mouseEvent);
+			if (mouseEvent.type === "scroll") {
+				if (this.onScroll) {
+					this.onScroll(mouseEvent);
+					this.requestRender();
+				}
+			} else if (this.onMouse) {
+				this.onMouse(mouseEvent);
 				this.requestRender();
 			}
 			return;
@@ -871,6 +888,68 @@ export class TUI extends Container {
 		return sliceByColumn(result, 0, totalWidth, true);
 	}
 
+	private extractLineMarkers(lines: string[], height: number): void {
+		this.lineMarkers.clear();
+		if (lines.length === 0 || height <= 0) return;
+
+		const viewportTop = Math.max(0, lines.length - height);
+		const viewportBottom = Math.min(lines.length, viewportTop + height);
+
+		for (let row = viewportTop; row < viewportBottom; row++) {
+			let line = lines[row];
+			let markerId: string | undefined;
+			let searchIndex = 0;
+
+			while (true) {
+				const markerIndex = line.indexOf(LINE_MARKER_PREFIX, searchIndex);
+				if (markerIndex === -1) break;
+				const marker = this.parseLineMarker(line, markerIndex);
+				if (!marker) {
+					searchIndex = markerIndex + LINE_MARKER_PREFIX.length;
+					continue;
+				}
+				if (!markerId && marker.id) {
+					markerId = marker.id;
+				}
+				line = line.slice(0, markerIndex) + line.slice(marker.endIndex + marker.terminatorLength);
+				searchIndex = markerIndex;
+			}
+
+			if (markerId) {
+				this.lineMarkers.set(row - viewportTop, markerId);
+			}
+
+			lines[row] = line;
+		}
+	}
+
+	private parseLineMarker(
+		line: string,
+		markerIndex: number,
+	): { id: string; endIndex: number; terminatorLength: number } | null {
+		const start = markerIndex + LINE_MARKER_PREFIX.length;
+		const belIndex = line.indexOf("\x07", start);
+		const stIndex = line.indexOf("\x1b\\", start);
+
+		let endIndex = -1;
+		let terminatorLength = 0;
+		if (belIndex !== -1 && (stIndex === -1 || belIndex < stIndex)) {
+			endIndex = belIndex;
+			terminatorLength = 1;
+		} else if (stIndex !== -1) {
+			endIndex = stIndex;
+			terminatorLength = 2;
+		}
+
+		if (endIndex === -1) return null;
+
+		return {
+			id: line.slice(start, endIndex),
+			endIndex,
+			terminatorLength,
+		};
+	}
+
 	/**
 	 * Find and extract cursor position from rendered lines.
 	 * Searches for CURSOR_MARKER, calculates its position, and strips it from the output.
@@ -920,6 +999,8 @@ export class TUI extends Container {
 		if (this.overlayStack.length > 0) {
 			newLines = this.compositeOverlays(newLines, width, height);
 		}
+
+		this.extractLineMarkers(newLines, height);
 
 		// Extract cursor position before applying line resets (marker must be found first)
 		const cursorPos = this.extractCursorPosition(newLines, height);

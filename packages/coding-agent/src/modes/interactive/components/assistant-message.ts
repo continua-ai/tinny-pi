@@ -21,6 +21,7 @@ export class AssistantMessageComponent extends Container {
 	private markdownTheme: MarkdownTheme;
 	private lastMessage?: AssistantMessage;
 	private collapsed = false;
+	private headerMarker?: string;
 
 	constructor(
 		message?: AssistantMessage,
@@ -58,6 +59,14 @@ export class AssistantMessageComponent extends Container {
 		this.hideThinkingBlock = hide;
 	}
 
+	setHeaderMarker(marker?: string): void {
+		if (this.headerMarker === marker) return;
+		this.headerMarker = marker;
+		if (this.lastMessage) {
+			this.updateContent(this.lastMessage);
+		}
+	}
+
 	setCollapsed(collapsed: boolean): void {
 		if (this.collapsed === collapsed) return;
 		this.collapsed = collapsed;
@@ -69,7 +78,8 @@ export class AssistantMessageComponent extends Container {
 	private getHeaderText(message: AssistantMessage): string {
 		const label = theme.fg("muted", theme.bold("Assistant"));
 		const model = message.model ? theme.fg("dim", ` • ${message.model}`) : "";
-		return `${label}${model}`;
+		const marker = this.headerMarker ?? "";
+		return `${marker}${label}${model}`;
 	}
 
 	private formatPreviewText(text: string): string {
