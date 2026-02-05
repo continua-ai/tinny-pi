@@ -341,7 +341,7 @@ export class SettingsSelectorComponent extends Container {
 
 		// Mouse tracking toggle (insert after continua-ui)
 		const continuaUiIndex = items.findIndex((item) => item.id === "continua-ui");
-		const mouseTracking = config.mouseTracking ?? false;
+		const mouseTracking = config.mouseTracking ?? true;
 		items.splice(continuaUiIndex + 1, 0, {
 			id: "mouse-tracking",
 			label: "Mouse interactions",
