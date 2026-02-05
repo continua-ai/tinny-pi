@@ -198,6 +198,14 @@ type BlockActionKind = "user" | "assistant" | "tool";
 
 type BlockFilterMode = "all" | "no-tools" | "messages";
 
+type ToolRunStatus = "running" | "success" | "error" | "cancelled";
+
+type PendingBashMeta = {
+	startedAt: number;
+	endedAt?: number;
+	status?: ToolRunStatus;
+};
+
 type BlockActionTarget = {
 	id: string;
 	kind: BlockActionKind;
@@ -207,6 +215,10 @@ type BlockActionTarget = {
 	toolName?: string;
 	toolArgs?: unknown;
 	toolCallId?: string;
+	timestamp?: number;
+	startedAt?: number;
+	endedAt?: number;
+	status?: ToolRunStatus;
 };
 
 type CompactionQueuedMessage = {
@@ -290,6 +302,7 @@ export class InteractiveMode {
 
 	// Continua UI toggle
 	private continuaUiEnabled = false;
+	private mouseTrackingEnabled = false;
 
 	// Block action palette state
 	private blockActionTargets: BlockActionTarget[] = [];
@@ -325,6 +338,7 @@ export class InteractiveMode {
 
 	// Track pending bash components (shown in pending area, moved to chat on submit)
 	private pendingBashComponents: BashExecutionComponent[] = [];
+	private pendingBashMetadata = new Map<BashExecutionComponent, PendingBashMeta>();
 
 	// Auto-compaction state
 	private autoCompactionLoader: Loader | undefined = undefined;
@@ -388,6 +402,7 @@ export class InteractiveMode {
 		this.ui = new TUI(new ProcessTerminal(), this.settingsManager.getShowHardwareCursor());
 		this.ui.setClearOnShrink(this.settingsManager.getClearOnShrink());
 		this.continuaUiEnabled = this.settingsManager.getContinuaUi();
+		this.mouseTrackingEnabled = this.settingsManager.getMouseTracking();
 		this.outputContainer = new Container();
 		this.fixedContainer = new Container();
 		this.scrollLayout = new ScrollLayout(this.outputContainer, this.fixedContainer, {
@@ -537,6 +552,7 @@ export class InteractiveMode {
 				hint("toggleBlocks", "to collapse messages"),
 				hint("cycleBlockFilter", "to filter blocks"),
 				hint("blockActions", "for block actions"),
+				hint("blockTimeline", "for block timeline"),
 				hint("commandPalette", "for command palette"),
 				hint("toggleThinking", "to expand thinking"),
 				hint("externalEditor", "for external editor"),
@@ -1387,6 +1403,9 @@ export class InteractiveMode {
 	// Maximum number of block action targets shown in the palette
 	private static readonly MAX_BLOCK_ACTION_TARGETS = 50;
 
+	// Maximum number of blocks shown in the timeline list
+	private static readonly MAX_BLOCK_TIMELINE_ITEMS = 200;
+
 	// Maximum number of history items shown in command search
 	private static readonly MAX_COMMAND_HISTORY_ITEMS = 200;
 
@@ -1407,13 +1426,18 @@ export class InteractiveMode {
 		this.ui.requestRender();
 	}
 
+	private isMouseInteractionEnabled(): boolean {
+		return this.continuaUiEnabled && this.mouseTrackingEnabled;
+	}
+
 	private applyOutputScrollMode(enabled: boolean, options?: { forceRender?: boolean }): void {
 		this.continuaUiEnabled = enabled;
 		this.scrollLayout.setScrollEnabled(enabled);
-		this.ui.onScroll = enabled ? (event) => this.handleOutputScroll(event) : undefined;
-		this.ui.onMouse = enabled ? (event) => this.handleMouseEvent(event) : undefined;
+		const mouseEnabled = this.isMouseInteractionEnabled();
+		this.ui.onScroll = mouseEnabled ? (event) => this.handleOutputScroll(event) : undefined;
+		this.ui.onMouse = mouseEnabled ? (event) => this.handleMouseEvent(event) : undefined;
 		if (this.isInitialized) {
-			this.ui.setMouseTracking(enabled);
+			this.ui.setMouseTracking(mouseEnabled);
 		}
 		if (enabled) {
 			this.scrollLayout.scrollToBottom();
@@ -1425,13 +1449,13 @@ export class InteractiveMode {
 	}
 
 	private handleOutputScroll(event: MouseScrollEvent): void {
-		if (!this.continuaUiEnabled) return;
+		if (!this.isMouseInteractionEnabled()) return;
 		const delta = event.delta * InteractiveMode.OUTPUT_SCROLL_LINES;
 		this.scrollLayout.scrollBy(delta);
 	}
 
 	private handleMouseEvent(event: MouseEvent): void {
-		if (!this.continuaUiEnabled) return;
+		if (!this.isMouseInteractionEnabled()) return;
 		if (event.type !== "button" || event.action !== "press") return;
 		if (this.ui.hasOverlay()) return;
 
@@ -2049,6 +2073,7 @@ export class InteractiveMode {
 		this.defaultEditor.onAction("toggleBlocks", () => this.toggleBlocksCollapsed());
 		this.defaultEditor.onAction("cycleBlockFilter", () => this.cycleBlockFilterMode());
 		this.defaultEditor.onAction("blockActions", () => this.showBlockActionPalette());
+		this.defaultEditor.onAction("blockTimeline", () => this.showBlockTimeline());
 		this.defaultEditor.onAction("commandPalette", () => {
 			void this.showCommandPalette();
 		});
@@ -2331,6 +2356,7 @@ export class InteractiveMode {
 						label: this.formatAssistantLabel(event.message),
 						component: this.streamingComponent,
 						text: this.getAssistantMessageText(event.message),
+						timestamp: event.message.timestamp,
 					});
 					this.streamingComponent.updateContent(this.streamingMessage);
 					this.ui.requestRender();
@@ -2372,6 +2398,9 @@ export class InteractiveMode {
 										toolName: content.name,
 										toolArgs: content.arguments,
 										toolCallId: content.id,
+										timestamp: this.streamingMessage?.timestamp ?? Date.now(),
+										startedAt: Date.now(),
+										status: "running",
 									});
 								} else {
 									const component = this.pendingTools.get(content.id);
@@ -2409,11 +2438,14 @@ export class InteractiveMode {
 						if (!errorMessage) {
 							errorMessage = this.streamingMessage.errorMessage || "Error";
 						}
-						for (const [, component] of this.pendingTools.entries()) {
+						const status: ToolRunStatus = this.streamingMessage.stopReason === "aborted" ? "cancelled" : "error";
+						const endedAt = Date.now();
+						for (const [toolCallId, component] of this.pendingTools.entries()) {
 							component.updateResult({
 								content: [{ type: "text", text: errorMessage }],
 								isError: true,
 							});
+							this.setToolRunEnd(toolCallId, status, endedAt);
 						}
 						this.pendingTools.clear();
 					} else {
@@ -2460,9 +2492,11 @@ export class InteractiveMode {
 						toolName: event.toolName,
 						toolArgs: event.args,
 						toolCallId: event.toolCallId,
+						timestamp: Date.now(),
 					});
 					this.ui.requestRender();
 				}
+				this.setToolRunStart(event.toolCallId);
 				break;
 			}
 
@@ -2480,6 +2514,7 @@ export class InteractiveMode {
 				if (component) {
 					component.updateResult({ ...event.result, isError: event.isError });
 					this.pendingTools.delete(event.toolCallId);
+					this.setToolRunEnd(event.toolCallId, event.isError ? "error" : "success");
 					this.ui.requestRender();
 				}
 				break;
@@ -2688,6 +2723,38 @@ export class InteractiveMode {
 		return fullTarget;
 	}
 
+	private setBlockRunStatus(
+		target: BlockActionTarget,
+		status: ToolRunStatus,
+		options?: { startedAt?: number; endedAt?: number },
+	): void {
+		if (options?.startedAt !== undefined) {
+			target.startedAt = options.startedAt;
+		} else if (!target.startedAt && status === "running") {
+			target.startedAt = Date.now();
+		}
+		if (status !== "running") {
+			const endedAt = options?.endedAt ?? Date.now();
+			target.endedAt = endedAt;
+			if (!target.startedAt) {
+				target.startedAt = endedAt;
+			}
+		}
+		target.status = status;
+	}
+
+	private setToolRunStart(toolCallId: string, startedAt = Date.now()): void {
+		const target = this.toolTargetByCallId.get(toolCallId);
+		if (!target) return;
+		this.setBlockRunStatus(target, "running", { startedAt });
+	}
+
+	private setToolRunEnd(toolCallId: string, status: ToolRunStatus, endedAt = Date.now()): void {
+		const target = this.toolTargetByCallId.get(toolCallId);
+		if (!target) return;
+		this.setBlockRunStatus(target, status, { endedAt });
+	}
+
 	private getBookmarkBadge(targetId: string): string | undefined {
 		if (!this.blockBookmarks.has(targetId)) return undefined;
 		return theme.fg("accent", "★ ");
@@ -2770,6 +2837,72 @@ export class InteractiveMode {
 		} catch {
 			return toolName;
 		}
+	}
+
+	private getBlockTimelineTargets(): BlockActionTarget[] {
+		const visibleTargets = this.blockActionTargets.filter((target) =>
+			this.chatContainer.children.includes(target.component),
+		);
+		const sortedTargets = [...visibleTargets].sort(
+			(a, b) => this.getBlockTimelineSortTime(b) - this.getBlockTimelineSortTime(a),
+		);
+		return sortedTargets.slice(0, InteractiveMode.MAX_BLOCK_TIMELINE_ITEMS);
+	}
+
+	private getBlockTimelineSortTime(target: BlockActionTarget): number {
+		if (target.startedAt !== undefined) return target.startedAt;
+		if (target.timestamp !== undefined) return target.timestamp;
+		return 0;
+	}
+
+	private formatBlockTimelineSummary(target: BlockActionTarget): string | undefined {
+		if (target.kind === "tool" && target.status === "error" && isBlockTextTarget(target.component)) {
+			const errorSummary = this.formatBlockSummary(target.component.getBlockText());
+			if (errorSummary) return errorSummary;
+		}
+		return this.formatBlockTargetDescription(target);
+	}
+
+	private formatBlockTimelineStatus(target: BlockActionTarget): string | undefined {
+		if (target.kind !== "tool") return undefined;
+		switch (target.status) {
+			case "running":
+				return "Running";
+			case "success":
+				return "Done";
+			case "error":
+				return "Error";
+			case "cancelled":
+				return "Cancelled";
+			default:
+				return undefined;
+		}
+	}
+
+	private formatBlockTimelineDuration(target: BlockActionTarget): string | undefined {
+		if (target.kind !== "tool") return undefined;
+		if (target.startedAt === undefined) return undefined;
+		const end = target.status === "running" ? Date.now() : target.endedAt !== undefined ? target.endedAt : undefined;
+		if (end === undefined) return undefined;
+		return this.formatDuration(end - target.startedAt);
+	}
+
+	private formatDuration(durationMs: number): string {
+		const clamped = Math.max(0, durationMs);
+		if (clamped < 1000) return `${clamped}ms`;
+		const seconds = clamped / 1000;
+		if (seconds < 60) {
+			const rounded = seconds < 10 ? Math.round(seconds * 10) / 10 : Math.round(seconds);
+			return `${rounded}s`;
+		}
+		const minutes = Math.floor(seconds / 60);
+		const remainingSeconds = Math.floor(seconds % 60);
+		if (minutes < 60) {
+			return `${minutes}m ${remainingSeconds}s`;
+		}
+		const hours = Math.floor(minutes / 60);
+		const remainingMinutes = minutes % 60;
+		return `${hours}h ${remainingMinutes}m`;
 	}
 
 	private copyBlockText(text: string, label: string): void {
@@ -2869,6 +3002,53 @@ export class InteractiveMode {
 					const target = targetById.get(item.id);
 					if (!target) {
 						this.showStatus("Bookmark no longer available");
+						return;
+					}
+					this.ensureBlockExpandedForNavigation(target);
+					this.scrollToBlock(target.id);
+					this.ui.requestRender();
+				},
+				() => {
+					done();
+					this.ui.requestRender();
+				},
+			);
+			return { component: palette, focus: palette };
+		});
+	}
+
+	private showBlockTimeline(): void {
+		const targets = this.getBlockTimelineTargets();
+		if (targets.length === 0) {
+			this.showStatus("No blocks available");
+			return;
+		}
+
+		const targetById = new Map(targets.map((target) => [target.id, target]));
+		const items: CommandPaletteItem[] = targets.map((target) => {
+			const summary = this.formatBlockTimelineSummary(target);
+			const status = this.formatBlockTimelineStatus(target);
+			const duration = this.formatBlockTimelineDuration(target);
+			const meta = [status, duration].filter(Boolean).join(" • ");
+			const descriptionParts = [meta, summary].filter(Boolean);
+			const description = descriptionParts.length > 0 ? descriptionParts.join(" — ") : undefined;
+			return {
+				id: target.id,
+				label: target.label,
+				description,
+				searchText: `${target.label} ${meta} ${summary ?? ""}`.trim(),
+			};
+		});
+
+		this.showSelector((done) => {
+			const palette = new CommandPaletteComponent(
+				"Block timeline",
+				items,
+				(item) => {
+					done();
+					const target = targetById.get(item.id);
+					if (!target) {
+						this.showStatus("Block no longer available");
 						return;
 					}
 					this.ensureBlockExpandedForNavigation(target);
@@ -3332,6 +3512,13 @@ export class InteractiveMode {
 			() => this.showBlockActionPalette(),
 			appKey(keybindings, "blockActions"),
 		);
+		addAction(
+			"action:block-timeline",
+			"Block timeline",
+			"Browse blocks by time",
+			() => this.showBlockTimeline(),
+			appKey(keybindings, "blockTimeline"),
+		);
 		addAction("action:block-bookmarks", "Block bookmarks", "Jump to bookmarked blocks", () =>
 			this.showBlockBookmarksPalette(),
 		);
@@ -3551,12 +3738,21 @@ export class InteractiveMode {
 					message.fullOutputPath,
 				);
 				this.chatContainer.addChild(component);
+				const status: ToolRunStatus | undefined = message.cancelled
+					? "cancelled"
+					: message.exitCode === 0
+						? "success"
+						: message.exitCode === undefined
+							? undefined
+							: "error";
 				this.registerBlockActionTarget({
 					kind: "tool",
 					label: this.formatToolLabel("bash"),
 					component,
 					toolName: "bash",
 					toolArgs: { command: message.command },
+					timestamp: message.timestamp,
+					status,
 				});
 				break;
 			}
@@ -3611,6 +3807,7 @@ export class InteractiveMode {
 								label: "User",
 								component: userComponent,
 								text: userMessage,
+								timestamp: message.timestamp,
 							});
 						}
 					} else {
@@ -3622,6 +3819,7 @@ export class InteractiveMode {
 							label: "User",
 							component: userComponent,
 							text: textContent,
+							timestamp: message.timestamp,
 						});
 					}
 					if (options?.populateHistory) {
@@ -3643,6 +3841,7 @@ export class InteractiveMode {
 					label: this.formatAssistantLabel(message),
 					component: assistantComponent,
 					text: this.getAssistantMessageText(message),
+					timestamp: message.timestamp,
 				});
 				break;
 			}
@@ -3697,13 +3896,16 @@ export class InteractiveMode {
 							);
 							component.setExpanded(this.toolOutputExpanded);
 							this.chatContainer.addChild(component);
-							this.registerBlockActionTarget({
+							const target = this.registerBlockActionTarget({
 								kind: "tool",
 								label: this.formatToolLabel(content.name),
 								component,
 								toolName: content.name,
 								toolArgs: content.arguments,
 								toolCallId: content.id,
+								timestamp: message.timestamp,
+								startedAt: message.timestamp,
+								status: "running",
 							});
 
 							if (message.stopReason === "aborted" || message.stopReason === "error") {
@@ -3718,6 +3920,9 @@ export class InteractiveMode {
 									errorMessage = message.errorMessage || "Error";
 								}
 								component.updateResult({ content: [{ type: "text", text: errorMessage }], isError: true });
+								this.setBlockRunStatus(target, message.stopReason === "aborted" ? "cancelled" : "error", {
+									endedAt: message.timestamp,
+								});
 							} else {
 								this.pendingTools.set(content.id, component);
 							}
@@ -3734,6 +3939,7 @@ export class InteractiveMode {
 					component.updateResult(message);
 					this.pendingTools.delete(message.toolCallId);
 				}
+				this.setToolRunEnd(message.toolCallId, message.isError ? "error" : "success", message.timestamp);
 			} else {
 				// All other messages use standard rendering
 				this.addMessageToChat(message, options);
@@ -3982,6 +4188,7 @@ export class InteractiveMode {
 				label: this.formatAssistantLabel(this.streamingMessage),
 				component: this.streamingComponent,
 				text: this.getAssistantMessageText(this.streamingMessage),
+				timestamp: this.streamingMessage.timestamp,
 			});
 			if (this.shouldRenderToolBlocks()) {
 				this.restoreStreamingToolBlocks();
@@ -4045,6 +4252,9 @@ export class InteractiveMode {
 				toolName: content.name,
 				toolArgs: content.arguments,
 				toolCallId: content.id,
+				timestamp: this.streamingMessage.timestamp,
+				startedAt: Date.now(),
+				status: "running",
 			});
 		}
 	}
@@ -4068,6 +4278,7 @@ export class InteractiveMode {
 				label: this.formatAssistantLabel(this.streamingMessage),
 				component: this.streamingComponent,
 				text: this.getAssistantMessageText(this.streamingMessage),
+				timestamp: this.streamingMessage.timestamp,
 			});
 			if (this.shouldRenderToolBlocks()) {
 				this.restoreStreamingToolBlocks();
@@ -4346,14 +4557,27 @@ export class InteractiveMode {
 			this.pendingMessagesContainer.removeChild(component);
 			if (showTools) {
 				this.chatContainer.addChild(component);
-				this.registerBlockActionTarget({
+				const meta = this.pendingBashMetadata.get(component);
+				const startedAt = meta?.startedAt;
+				const status = meta?.status ?? "running";
+				const target = this.registerBlockActionTarget({
 					kind: "tool",
 					label: this.formatToolLabel("bash"),
 					component,
 					toolName: "bash",
 					toolArgs: { command: component.getCommand() },
+					timestamp: startedAt ?? Date.now(),
+					startedAt,
+					status,
 				});
+				if (meta?.status) {
+					this.setBlockRunStatus(target, meta.status, {
+						startedAt: meta.startedAt,
+						endedAt: meta.endedAt,
+					});
+				}
 			}
+			this.pendingBashMetadata.delete(component);
 		}
 		this.pendingBashComponents = [];
 	}
@@ -4403,6 +4627,7 @@ export class InteractiveMode {
 					quietStartup: this.settingsManager.getQuietStartup(),
 					clearOnShrink: this.settingsManager.getClearOnShrink(),
 					continuaUi: this.continuaUiEnabled,
+					mouseTracking: this.mouseTrackingEnabled,
 				},
 				{
 					onAutoCompactChange: (enabled) => {
@@ -4498,6 +4723,11 @@ export class InteractiveMode {
 					onContinuaUiChange: (enabled) => {
 						this.settingsManager.setContinuaUi(enabled);
 						this.applyOutputScrollMode(enabled, { forceRender: true });
+					},
+					onMouseTrackingChange: (enabled) => {
+						this.settingsManager.setMouseTracking(enabled);
+						this.mouseTrackingEnabled = enabled;
+						this.applyOutputScrollMode(this.continuaUiEnabled, { forceRender: true });
 					},
 					onCancel: () => {
 						done();
@@ -5136,6 +5366,7 @@ export class InteractiveMode {
 			}
 			this.ui.setShowHardwareCursor(this.settingsManager.getShowHardwareCursor());
 			this.ui.setClearOnShrink(this.settingsManager.getClearOnShrink());
+			this.mouseTrackingEnabled = this.settingsManager.getMouseTracking();
 			this.applyOutputScrollMode(this.settingsManager.getContinuaUi(), { forceRender: true });
 			this.rebuildAutocomplete();
 			const runner = this.session.extensionRunner;
@@ -5420,6 +5651,7 @@ export class InteractiveMode {
 		const toggleBlocks = this.getAppKeyDisplay("toggleBlocks");
 		const cycleBlockFilter = this.getAppKeyDisplay("cycleBlockFilter");
 		const blockActions = this.getAppKeyDisplay("blockActions");
+		const blockTimeline = this.getAppKeyDisplay("blockTimeline");
 		const commandPalette = this.getAppKeyDisplay("commandPalette");
 		const toggleThinking = this.getAppKeyDisplay("toggleThinking");
 		const externalEditor = this.getAppKeyDisplay("externalEditor");
@@ -5466,6 +5698,7 @@ export class InteractiveMode {
 | \`${toggleBlocks}\` | Toggle message block collapse |
 | \`${cycleBlockFilter}\` | Cycle block filters |
 | \`${blockActions}\` | Open block action palette |
+| \`${blockTimeline}\` | Open block timeline |
 | \`${commandPalette}\` | Open command palette |
 | \`${toggleThinking}\` | Toggle thinking block visibility |
 | \`${externalEditor}\` | Edit message in external editor |
@@ -5518,6 +5751,8 @@ export class InteractiveMode {
 		// Clear UI state
 		this.chatContainer.clear();
 		this.pendingMessagesContainer.clear();
+		this.pendingBashComponents = [];
+		this.pendingBashMetadata.clear();
 		this.compactionQueuedMessages = [];
 		this.streamingComponent = undefined;
 		this.streamingMessage = undefined;
@@ -5597,6 +5832,10 @@ export class InteractiveMode {
 			: undefined;
 
 		const showTools = this.shouldRenderToolBlocks();
+		const isDeferred = this.session.isStreaming;
+		const startedAt = Date.now();
+		const bashMeta: PendingBashMeta = { startedAt, status: "running" };
+		let bashTarget: BlockActionTarget | undefined;
 
 		// If extension returned a full result, use it directly
 		if (eventResult?.result) {
@@ -5604,26 +5843,46 @@ export class InteractiveMode {
 
 			// Create UI component for display
 			this.bashComponent = showTools ? new BashExecutionComponent(command, this.ui, excludeFromContext) : undefined;
-			if (this.bashComponent) {
-				if (this.session.isStreaming) {
-					this.pendingMessagesContainer.addChild(this.bashComponent);
-					this.pendingBashComponents.push(this.bashComponent);
+			const bashComponent = this.bashComponent;
+			if (bashComponent) {
+				if (isDeferred) {
+					this.pendingMessagesContainer.addChild(bashComponent);
+					this.pendingBashComponents.push(bashComponent);
+					this.pendingBashMetadata.set(bashComponent, bashMeta);
 				} else {
-					this.chatContainer.addChild(this.bashComponent);
+					this.chatContainer.addChild(bashComponent);
+					bashTarget = this.registerBlockActionTarget({
+						kind: "tool",
+						label: this.formatToolLabel("bash"),
+						component: bashComponent,
+						toolName: "bash",
+						toolArgs: { command },
+						timestamp: startedAt,
+						startedAt,
+						status: "running",
+					});
 				}
 			}
 
 			// Show output and complete
-			if (this.bashComponent && result.output) {
-				this.bashComponent.appendOutput(result.output);
+			if (bashComponent && result.output) {
+				bashComponent.appendOutput(result.output);
 			}
-			if (this.bashComponent) {
-				this.bashComponent.setComplete(
+			if (bashComponent) {
+				bashComponent.setComplete(
 					result.exitCode,
 					result.cancelled,
 					result.truncated ? ({ truncated: true, content: result.output } as TruncationResult) : undefined,
 					result.fullOutputPath,
 				);
+			}
+
+			const endedAt = Date.now();
+			const status: ToolRunStatus = result.cancelled ? "cancelled" : result.exitCode === 0 ? "success" : "error";
+			bashMeta.status = status;
+			bashMeta.endedAt = endedAt;
+			if (bashTarget) {
+				this.setBlockRunStatus(bashTarget, status, { startedAt, endedAt });
 			}
 
 			// Record the result in session
@@ -5634,17 +5893,28 @@ export class InteractiveMode {
 		}
 
 		// Normal execution path (possibly with custom operations)
-		const isDeferred = this.session.isStreaming;
 		this.bashComponent = showTools ? new BashExecutionComponent(command, this.ui, excludeFromContext) : undefined;
+		const bashComponent = this.bashComponent;
 
-		if (this.bashComponent) {
+		if (bashComponent) {
 			if (isDeferred) {
 				// Show in pending area when agent is streaming
-				this.pendingMessagesContainer.addChild(this.bashComponent);
-				this.pendingBashComponents.push(this.bashComponent);
+				this.pendingMessagesContainer.addChild(bashComponent);
+				this.pendingBashComponents.push(bashComponent);
+				this.pendingBashMetadata.set(bashComponent, bashMeta);
 			} else {
 				// Show in chat immediately when agent is idle
-				this.chatContainer.addChild(this.bashComponent);
+				this.chatContainer.addChild(bashComponent);
+				bashTarget = this.registerBlockActionTarget({
+					kind: "tool",
+					label: this.formatToolLabel("bash"),
+					component: bashComponent,
+					toolName: "bash",
+					toolArgs: { command },
+					timestamp: startedAt,
+					startedAt,
+					status: "running",
+				});
 			}
 			this.ui.requestRender();
 		}
@@ -5653,25 +5923,39 @@ export class InteractiveMode {
 			const result = await this.session.executeBash(
 				command,
 				(chunk) => {
-					if (this.bashComponent) {
-						this.bashComponent.appendOutput(chunk);
+					if (bashComponent) {
+						bashComponent.appendOutput(chunk);
 						this.ui.requestRender();
 					}
 				},
 				{ excludeFromContext, operations: eventResult?.operations },
 			);
 
-			if (this.bashComponent) {
-				this.bashComponent.setComplete(
+			if (bashComponent) {
+				bashComponent.setComplete(
 					result.exitCode,
 					result.cancelled,
 					result.truncated ? ({ truncated: true, content: result.output } as TruncationResult) : undefined,
 					result.fullOutputPath,
 				);
 			}
+
+			const endedAt = Date.now();
+			const status: ToolRunStatus = result.cancelled ? "cancelled" : result.exitCode === 0 ? "success" : "error";
+			bashMeta.status = status;
+			bashMeta.endedAt = endedAt;
+			if (bashTarget) {
+				this.setBlockRunStatus(bashTarget, status, { startedAt, endedAt });
+			}
 		} catch (error) {
-			if (this.bashComponent) {
-				this.bashComponent.setComplete(undefined, false);
+			if (bashComponent) {
+				bashComponent.setComplete(undefined, false);
+			}
+			const endedAt = Date.now();
+			bashMeta.status = "error";
+			bashMeta.endedAt = endedAt;
+			if (bashTarget) {
+				this.setBlockRunStatus(bashTarget, "error", { startedAt, endedAt });
 			}
 			this.showError(`Bash command failed: ${error instanceof Error ? error.message : "Unknown error"}`);
 		}

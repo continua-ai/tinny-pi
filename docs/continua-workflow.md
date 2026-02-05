@@ -36,6 +36,7 @@ This document captures how we keep `continua-ai/tinny-pi` clean and easy to sync
 
 - Keep diffs **small, additive, and opt-in** by default.
 - Prefer wrappers and new components over core refactors.
+- **Extension-first**: if a feature can live in pi-lab, implement it there; only change core for layout/rendering needs, input plumbing, or new extension hooks.
 - Document settings/migrations whenever we introduce a fork-only option.
 
 ## UI/TUI direction
@@ -46,7 +47,8 @@ This document captures how we keep `continua-ai/tinny-pi` clean and easy to sync
 
 ## Fork toggles and performance options
 
-- Master toggle: `terminal.continuaUi` disables all Continua-specific UI differences (output-only scroll + header mouse actions), restoring upstream `pi` behavior.
+- Master toggle: `terminal.continuaUi` disables all Continua-specific UI differences (output-only scroll + sticky headers), restoring upstream `pi` behavior.
+- Mouse interactions are controlled by `terminal.mouseTracking` (default off to preserve terminal selection).
 - Add per-feature toggles for performance-sensitive behaviors (e.g., git polling), **default on**.
 - Keep these toggles documented and opt-in to disabling, not opt-in to enabling.
 

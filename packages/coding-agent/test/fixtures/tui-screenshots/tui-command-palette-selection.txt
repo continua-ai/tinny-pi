@@ -1,5 +1,4 @@
-[48;2;40;50;40m [38;2;128;128;128mStep 1 • [39mRead [38;2;138;190;183mpackage.json[38;2;255;255;0m:1-1[39m
-
+[48;2;40;50;40m
  [1mread[0m[48;2;40;50;40m [38;2;138;190;183mpackage.json[38;2;255;255;0m:1-1[39m
 
  {[38;2;156;220;254m"name"[39m:[38;2;206;145;120m"tinny-pi"[39m}
@@ -13,9 +12,10 @@
 > bloc[7m [0m
 
    Block actions[38;2;128;128;128m Action · Copy or collapse a block (ctrl+a)[39m
+   Block timeline[38;2;128;128;128m Action · Browse blocks by time (shift+ctrl+b)[39m
    Block bookmarks[38;2;128;128;128m Action · Jump to bookmarked blocks[39m
- [38;2;138;190;183m→ Block filter: All[38;2;128;128;128m Action · Show all blocks (current)[39m
-   Block filter: No tools[38;2;128;128;128m Action · Hide tool output blocks[39m
+   Block filter: All[38;2;128;128;128m Action · Show all blocks (current)[39m
+ [38;2;138;190;183m→ Block filter: No tools[38;2;128;128;128m Action · Hide tool output blocks[39m
    Block filter: User + assistant[38;2;128;128;128m Action · Show user and assistant blocks only[39m
    Toggle thinking blocks[38;2;128;128;128m Action · Show or hide thinking blocks (ctrl+t)[39m
    Toggle message collapse[38;2;128;128;128m Action · Collapse or expand message blocks (ctrl+b)[39m

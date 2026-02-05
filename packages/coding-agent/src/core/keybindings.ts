@@ -27,6 +27,7 @@ export type AppAction =
 	| "toggleBlocks"
 	| "cycleBlockFilter"
 	| "blockActions"
+	| "blockTimeline"
 	| "commandPalette"
 	| "toggleThinking"
 	| "toggleSessionNamedFilter"
@@ -67,6 +68,7 @@ export const DEFAULT_APP_KEYBINDINGS: Record<AppAction, KeyId | KeyId[]> = {
 	toggleBlocks: "shift+ctrl+o",
 	cycleBlockFilter: "shift+ctrl+f",
 	blockActions: "shift+ctrl+a",
+	blockTimeline: "shift+ctrl+b",
 	commandPalette: "shift+ctrl+k",
 	toggleThinking: "ctrl+t",
 	toggleSessionNamedFilter: "ctrl+n",
@@ -102,6 +104,7 @@ const APP_ACTIONS: AppAction[] = [
 	"toggleBlocks",
 	"cycleBlockFilter",
 	"blockActions",
+	"blockTimeline",
 	"commandPalette",
 	"toggleThinking",
 	"toggleSessionNamedFilter",
