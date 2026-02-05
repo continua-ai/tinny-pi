@@ -46,7 +46,7 @@ This document captures how we keep `continua-ai/tinny-pi` clean and easy to sync
 
 ## Fork toggles and performance options
 
-- Add a single setting to disable **all Continua-specific UI differences**, restoring upstream `pi` behavior.
+- Master toggle: `terminal.continuaUi` disables all Continua-specific UI differences (output-only scroll + header mouse actions), restoring upstream `pi` behavior.
 - Add per-feature toggles for performance-sensitive behaviors (e.g., git polling), **default on**.
 - Keep these toggles documented and opt-in to disabling, not opt-in to enabling.
 

@@ -23,6 +23,7 @@ Tools for building AI agents and managing LLM deployments.
 
 This fork tracks upstream `badlogic/pi-mono` with Continua-specific changes that are opt-in where possible.
 Tested only on macOS with Ghostty.
+Continua UI enhancements (output-only scroll, clickable headers) are gated by `terminal.continuaUi` (default on); toggle via `/settings` to restore upstream behavior. Left-click headers to collapse; right-click to open block actions.
 
 ## Packages
 

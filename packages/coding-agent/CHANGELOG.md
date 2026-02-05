@@ -17,6 +17,7 @@
 - Added command palette entries and prompt status chips to reflect active block filters.
 - Added `terminal.continuaUi` setting to enable Continua UI enhancements, including output-only scrolling with a pinned prompt/footer.
 - Added mouse-click support on message/tool headers to toggle collapse in Continua UI mode.
+- Added right-click header shortcut to open block actions in Continua UI mode.
 
 ### Changed
 
