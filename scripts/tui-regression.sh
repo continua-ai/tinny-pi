@@ -8,7 +8,8 @@ SNAPSHOT_FILE="$ROOT_DIR/packages/coding-agent/test/fixtures/tui-regression.snap
 OUTPUT_DIR="$ROOT_DIR/.tmp"
 OUTPUT_FILE="$OUTPUT_DIR/tui-regression-output.txt"
 RAW_OUTPUT_FILE="$OUTPUT_DIR/tui-regression-output-raw.txt"
-WORKSPACE_DIR="$ROOT_DIR/compaction-results/tui-workspace"
+WORKSPACE_DIR="$HOME/.pi-tui-regression-workspace"
+WORKSPACE_DISPLAY="~/.pi-tui-regression-workspace"
 
 UPDATE=false
 
@@ -116,7 +117,7 @@ normalize_output() {
 	if [[ "$short_workspace" == "$HOME"* ]]; then
 		short_workspace="~${short_workspace#$HOME}"
 	fi
-	sed -e "s|$WORKSPACE_DIR|~/tui-workspace|g" -e "s|$short_workspace|~/tui-workspace|g" "$input" > "$output"
+	sed -e "s|$WORKSPACE_DIR|$WORKSPACE_DISPLAY|g" -e "s|$short_workspace|$WORKSPACE_DISPLAY|g" "$input" > "$output"
 }
 
 if ! wait_for_render; then
