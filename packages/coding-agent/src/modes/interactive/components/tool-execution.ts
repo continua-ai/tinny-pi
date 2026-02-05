@@ -67,6 +67,7 @@ export class ToolExecutionComponent extends Container {
 	private args: any;
 	private step?: number;
 	private expanded = false;
+	private headerMarker?: string;
 	private showImages: boolean;
 	private isPartial = true;
 	private toolDefinition?: ToolDefinition;
@@ -234,6 +235,12 @@ export class ToolExecutionComponent extends Container {
 		this.updateDisplay();
 	}
 
+	setHeaderMarker(marker?: string): void {
+		if (this.headerMarker === marker) return;
+		this.headerMarker = marker;
+		this.updateDisplay();
+	}
+
 	override invalidate(): void {
 		super.invalidate();
 		this.updateDisplay();
@@ -365,10 +372,19 @@ export class ToolExecutionComponent extends Container {
 		}
 	}
 
+	private getStepHeaderMarker(): string {
+		return this.step !== undefined ? (this.headerMarker ?? "") : "";
+	}
+
+	private getToolHeaderMarker(): string {
+		return this.step === undefined ? (this.headerMarker ?? "") : "";
+	}
+
 	private formatStepCardText(): string {
 		if (this.step === undefined) return "";
 		const summary = this.formatStepSummary();
-		return `${theme.fg("muted", `Step ${this.step}`)}${theme.fg("muted", " • ")}${summary}`;
+		const marker = this.getStepHeaderMarker();
+		return `${marker}${theme.fg("muted", `Step ${this.step}`)}${theme.fg("muted", " • ")}${summary}`;
 	}
 
 	private formatStepSummary(): string {
@@ -442,9 +458,10 @@ export class ToolExecutionComponent extends Container {
 
 		// Header
 		const timeoutSuffix = timeout ? theme.fg("muted", ` (timeout ${timeout}s)`) : "";
+		const headerMarker = this.getToolHeaderMarker();
 		this.contentBox.addChild(
 			new Text(
-				theme.fg("toolTitle", theme.bold(`$ ${command || theme.fg("toolOutput", "...")}`)) + timeoutSuffix,
+				`${headerMarker}${theme.fg("toolTitle", theme.bold(`$ ${command || theme.fg("toolOutput", "...")}`))}${timeoutSuffix}`,
 				0,
 				0,
 			),
@@ -547,6 +564,7 @@ export class ToolExecutionComponent extends Container {
 
 	private formatToolExecution(): string {
 		let text = "";
+		const headerMarker = this.getToolHeaderMarker();
 
 		if (this.toolName === "read") {
 			const path = shortenPath(this.args?.file_path || this.args?.path || "");
@@ -560,7 +578,7 @@ export class ToolExecutionComponent extends Container {
 				pathDisplay += theme.fg("warning", `:${startLine}${endLine ? `-${endLine}` : ""}`);
 			}
 
-			text = `${theme.fg("toolTitle", theme.bold("read"))} ${pathDisplay}`;
+			text = `${headerMarker}${theme.fg("toolTitle", theme.bold("read"))} ${pathDisplay}`;
 
 			if (this.result) {
 				const output = this.getTextOutput();
@@ -620,6 +638,7 @@ export class ToolExecutionComponent extends Container {
 			const totalLines = lines.length;
 
 			text =
+				headerMarker +
 				theme.fg("toolTitle", theme.bold("write")) +
 				" " +
 				(path ? theme.fg("accent", path) : theme.fg("toolOutput", "..."));
@@ -663,7 +682,7 @@ export class ToolExecutionComponent extends Container {
 				pathDisplay += theme.fg("warning", `:${firstChangedLine}`);
 			}
 
-			text = `${theme.fg("toolTitle", theme.bold("edit"))} ${pathDisplay}`;
+			text = `${headerMarker}${theme.fg("toolTitle", theme.bold("edit"))} ${pathDisplay}`;
 
 			if (this.result?.isError) {
 				// Show error from result
@@ -688,7 +707,7 @@ export class ToolExecutionComponent extends Container {
 			const path = shortenPath(this.args?.path || ".");
 			const limit = this.args?.limit;
 
-			text = `${theme.fg("toolTitle", theme.bold("ls"))} ${theme.fg("accent", path)}`;
+			text = `${headerMarker}${theme.fg("toolTitle", theme.bold("ls"))} ${theme.fg("accent", path)}`;
 			if (limit !== undefined) {
 				text += theme.fg("toolOutput", ` (limit ${limit})`);
 			}
@@ -726,6 +745,7 @@ export class ToolExecutionComponent extends Container {
 			const limit = this.args?.limit;
 
 			text =
+				headerMarker +
 				theme.fg("toolTitle", theme.bold("find")) +
 				" " +
 				theme.fg("accent", pattern) +
@@ -768,6 +788,7 @@ export class ToolExecutionComponent extends Container {
 			const limit = this.args?.limit;
 
 			text =
+				headerMarker +
 				theme.fg("toolTitle", theme.bold("grep")) +
 				" " +
 				theme.fg("accent", `/${pattern}/`) +
@@ -812,7 +833,7 @@ export class ToolExecutionComponent extends Container {
 			}
 		} else {
 			// Generic tool (shouldn't reach here for custom tools)
-			text = theme.fg("toolTitle", theme.bold(this.toolName));
+			text = `${headerMarker}${theme.fg("toolTitle", theme.bold(this.toolName))}`;
 
 			const content = JSON.stringify(this.args, null, 2);
 			text += `\n\n${content}`;

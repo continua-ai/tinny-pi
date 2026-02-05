@@ -2,7 +2,7 @@ import assert from "node:assert";
 import { describe, it } from "node:test";
 import type { Terminal as XtermTerminalType } from "@xterm/headless";
 import { ScrollLayout } from "../src/components/scroll-layout.js";
-import { type Component, TUI } from "../src/tui.js";
+import { type Component, createLineMarker, TUI } from "../src/tui.js";
 import { VirtualTerminal } from "./virtual-terminal.js";
 
 class TestComponent implements Component {
@@ -333,6 +333,27 @@ describe("ScrollLayout", () => {
 		assert.ok(viewport[3]?.includes("Line 3"), `Expected Line 3 at row 3, got: ${viewport[3]}`);
 		assert.ok(viewport[4]?.includes("INPUT"), `Expected INPUT at row 4, got: ${viewport[4]}`);
 		assert.ok(viewport[5]?.includes("FOOTER"), `Expected FOOTER at row 5, got: ${viewport[5]}`);
+
+		tui.stop();
+	});
+});
+
+describe("TUI line markers", () => {
+	it("captures markers for visible lines", async () => {
+		const terminal = new VirtualTerminal(20, 4);
+		const tui = new TUI(terminal);
+		const component = new TestComponent();
+		component.lines = [`${createLineMarker("block-1")}Header`, "Body"];
+		tui.addChild(component);
+
+		tui.start();
+		await terminal.flush();
+
+		assert.strictEqual(tui.getLineMarkerAt(0), "block-1");
+		assert.strictEqual(tui.getLineMarkerAt(1), undefined);
+
+		const viewport = terminal.getViewport();
+		assert.ok(viewport[0]?.includes("Header"), `Header line rendered: ${viewport[0]}`);
 
 		tui.stop();
 	});

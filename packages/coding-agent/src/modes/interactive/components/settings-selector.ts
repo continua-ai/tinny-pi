@@ -41,7 +41,7 @@ export interface SettingsConfig {
 	autocompleteMaxVisible: number;
 	quietStartup: boolean;
 	clearOnShrink: boolean;
-	scrollOutputOnly?: boolean;
+	continuaUi?: boolean;
 }
 
 export interface SettingsCallbacks {
@@ -63,7 +63,7 @@ export interface SettingsCallbacks {
 	onAutocompleteMaxVisibleChange: (maxVisible: number) => void;
 	onQuietStartupChange: (enabled: boolean) => void;
 	onClearOnShrinkChange: (enabled: boolean) => void;
-	onScrollOutputOnlyChange?: (enabled: boolean) => void;
+	onContinuaUiChange?: (enabled: boolean) => void;
 	onCancel: () => void;
 }
 
@@ -326,14 +326,14 @@ export class SettingsSelectorComponent extends Container {
 			values: ["true", "false"],
 		});
 
-		// Output-only scroll toggle (insert after clear-on-shrink)
+		// Continua UI toggle (insert after clear-on-shrink)
 		const clearOnShrinkIndex = items.findIndex((item) => item.id === "clear-on-shrink");
-		const scrollOutputOnly = config.scrollOutputOnly ?? true;
+		const continuaUi = config.continuaUi ?? true;
 		items.splice(clearOnShrinkIndex + 1, 0, {
-			id: "scroll-output-only",
-			label: "Scroll output only",
-			description: "Keep input and footer pinned while scrolling output",
-			currentValue: scrollOutputOnly ? "true" : "false",
+			id: "continua-ui",
+			label: "Continua UI",
+			description: "Enable Continua UI enhancements (output-only scroll, clickable headers)",
+			currentValue: continuaUi ? "true" : "false",
 			values: ["true", "false"],
 		});
 
@@ -391,8 +391,8 @@ export class SettingsSelectorComponent extends Container {
 					case "clear-on-shrink":
 						callbacks.onClearOnShrinkChange(newValue === "true");
 						break;
-					case "scroll-output-only":
-						callbacks.onScrollOutputOnlyChange?.(newValue === "true");
+					case "continua-ui":
+						callbacks.onContinuaUiChange?.(newValue === "true");
 						break;
 				}
 			},

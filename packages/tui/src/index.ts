@@ -47,7 +47,13 @@ export {
 	setKittyProtocolActive,
 } from "./keys.js";
 // Mouse input handling
-export { type MouseEvent, type MouseScrollEvent, parseMouseEvent } from "./mouse.js";
+export {
+	type MouseButton,
+	type MouseButtonEvent,
+	type MouseEvent,
+	type MouseScrollEvent,
+	parseMouseEvent,
+} from "./mouse.js";
 // Input buffering for batch splitting
 export { StdinBuffer, type StdinBufferEventMap, type StdinBufferOptions } from "./stdin-buffer.js";
 // Terminal interface and implementations
@@ -82,9 +88,11 @@ export {
 	type Component,
 	Container,
 	CURSOR_MARKER,
+	createLineMarker,
 	type Focusable,
 	isFocusable,
 	isViewportAware,
+	LINE_MARKER_PREFIX,
 	type OverlayAnchor,
 	type OverlayHandle,
 	type OverlayMargin,

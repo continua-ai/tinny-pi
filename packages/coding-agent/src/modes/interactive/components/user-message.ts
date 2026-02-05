@@ -18,6 +18,7 @@ export class UserMessageComponent extends Container {
 	private markdownTheme: MarkdownTheme;
 	private collapsed = false;
 	private contentContainer: Container;
+	private headerMarker?: string;
 
 	constructor(text: string, markdownTheme: MarkdownTheme = getMarkdownTheme()) {
 		super();
@@ -31,6 +32,12 @@ export class UserMessageComponent extends Container {
 	setCollapsed(collapsed: boolean): void {
 		if (this.collapsed === collapsed) return;
 		this.collapsed = collapsed;
+		this.updateDisplay();
+	}
+
+	setHeaderMarker(marker?: string): void {
+		if (this.headerMarker === marker) return;
+		this.headerMarker = marker;
 		this.updateDisplay();
 	}
 
@@ -55,7 +62,8 @@ export class UserMessageComponent extends Container {
 	private updateDisplay(): void {
 		this.contentContainer.clear();
 		this.contentContainer.addChild(new Spacer(1));
-		this.contentContainer.addChild(new TruncatedText(theme.fg("muted", theme.bold("User")), 1, 0));
+		const marker = this.headerMarker ?? "";
+		this.contentContainer.addChild(new TruncatedText(`${marker}${theme.fg("muted", theme.bold("User"))}`, 1, 0));
 
 		if (this.collapsed) {
 			const preview = this.getPreviewText();
