@@ -7,6 +7,7 @@ SESSION_FILE="$ROOT_DIR/packages/coding-agent/test/fixtures/tui-regression.jsonl
 SNAPSHOT_FILE="$ROOT_DIR/packages/coding-agent/test/fixtures/tui-regression.snapshot.txt"
 OUTPUT_DIR="$ROOT_DIR/.tmp"
 OUTPUT_FILE="$OUTPUT_DIR/tui-regression-output.txt"
+RAW_OUTPUT_FILE="$OUTPUT_DIR/tui-regression-output-raw.txt"
 WORKSPACE_DIR="$ROOT_DIR/compaction-results/tui-workspace"
 
 UPDATE=false
@@ -108,6 +109,16 @@ wait_for_render() {
 	return 1
 }
 
+normalize_output() {
+	local input="$1"
+	local output="$2"
+	local short_workspace="$WORKSPACE_DIR"
+	if [[ "$short_workspace" == "$HOME"* ]]; then
+		short_workspace="~${short_workspace#$HOME}"
+	fi
+	sed -e "s|$WORKSPACE_DIR|~/tui-workspace|g" -e "s|$short_workspace|~/tui-workspace|g" "$input" > "$output"
+}
+
 if ! wait_for_render; then
 	echo "TUI did not render the session within the expected time."
 	exit 1
@@ -116,7 +127,8 @@ fi
 tmux send-keys -t "$SESSION_NAME" C-b
 sleep 0.5
 
-tmux capture-pane -t "$SESSION_NAME" -p > "$OUTPUT_FILE"
+tmux capture-pane -t "$SESSION_NAME" -p > "$RAW_OUTPUT_FILE"
+normalize_output "$RAW_OUTPUT_FILE" "$OUTPUT_FILE"
 
 if [ "$UPDATE" = true ]; then
 	cp "$OUTPUT_FILE" "$SNAPSHOT_FILE"
