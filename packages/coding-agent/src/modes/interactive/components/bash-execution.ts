@@ -37,6 +37,7 @@ export class BashExecutionComponent extends Container {
 	};
 	private outputVersion = 0;
 	private outputLines: string[] = [];
+	private outputByteCount = 0;
 	private status: "running" | "complete" | "cancelled" | "error" = "running";
 	private exitCode: number | undefined = undefined;
 	private loader: Loader;
@@ -113,6 +114,15 @@ export class BashExecutionComponent extends Container {
 		return output ? `${this.command}\n${output}` : this.command;
 	}
 
+	getOutputStats(): { byteCount: number; lineCount: number; lastLine?: string } {
+		const lineCount = this.outputLines.length;
+		return {
+			byteCount: this.outputByteCount,
+			lineCount,
+			lastLine: lineCount > 0 ? this.outputLines[lineCount - 1] : undefined,
+		};
+	}
+
 	private formatHeaderText(colorKey: ThemeColor): string {
 		const marker = this.headerMarker ?? "";
 		const badge = this.headerBadge ?? "";
@@ -137,6 +147,8 @@ export class BashExecutionComponent extends Container {
 		// Strip ANSI codes and normalize line endings
 		// Note: binary data is already sanitized in tui-renderer.ts executeBashCommand
 		const clean = stripAnsi(chunk).replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+
+		this.outputByteCount += Buffer.byteLength(clean, "utf8");
 
 		// Append to output lines
 		const newLines = clean.split("\n");

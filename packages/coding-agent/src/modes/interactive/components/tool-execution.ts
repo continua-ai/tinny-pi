@@ -83,6 +83,10 @@ export class ToolExecutionComponent extends Container {
 		result: BlockOutputFilterResult | null;
 	};
 	private outputVersion = 0;
+	private outputStatsCache?: {
+		outputVersion: number;
+		stats: { byteCount: number; lineCount: number; lastLine?: string };
+	};
 	private showImages: boolean;
 	private isPartial = true;
 	private toolDefinition?: ToolDefinition;
@@ -152,6 +156,7 @@ export class ToolExecutionComponent extends Container {
 		this.args = args;
 		this.outputVersion += 1;
 		this.outputFilterCache = undefined;
+		this.outputStatsCache = undefined;
 		this.updateDisplay();
 	}
 
@@ -208,6 +213,7 @@ export class ToolExecutionComponent extends Container {
 		this.isPartial = isPartial;
 		this.outputVersion += 1;
 		this.outputFilterCache = undefined;
+		this.outputStatsCache = undefined;
 		this.updateDisplay();
 		// Convert non-PNG images to PNG for Kitty protocol (async)
 		this.maybeConvertImagesForKitty();
@@ -295,6 +301,21 @@ export class ToolExecutionComponent extends Container {
 			sections.push(output);
 		}
 		return sections.join("\n");
+	}
+
+	getOutputStats(): { byteCount: number; lineCount: number; lastLine?: string } {
+		if (this.outputStatsCache && this.outputStatsCache.outputVersion === this.outputVersion) {
+			return this.outputStatsCache.stats;
+		}
+		const output = this.getTextOutput();
+		const lines = output ? output.split("\n") : [];
+		const stats = {
+			byteCount: output ? Buffer.byteLength(output, "utf8") : 0,
+			lineCount: lines.length,
+			lastLine: lines.length > 0 ? lines[lines.length - 1] : undefined,
+		};
+		this.outputStatsCache = { outputVersion: this.outputVersion, stats };
+		return stats;
 	}
 
 	override invalidate(): void {
