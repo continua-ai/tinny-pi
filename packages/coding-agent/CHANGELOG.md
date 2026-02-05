@@ -22,6 +22,7 @@
 - Added block search and bookmark palettes for quick navigation across messages and tool output.
 - Added command palette entries for current-session history and session-wide command search.
 - Added block action navigation to jump to the start or end of a block in Continua UI mode.
+- Added extension events for tool execution start/update/end to observe streaming tool output.
 
 ### Changed
 

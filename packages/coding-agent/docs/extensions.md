@@ -540,6 +540,19 @@ pi.on("tool_result", async (event, ctx) => {
 });
 ```
 
+#### tool_execution_start / tool_execution_update / tool_execution_end
+
+Fired while tools are running. Useful for live status widgets and long-running command monitoring.
+`tool_execution_start` fires when the tool begins. `tool_execution_end` includes the final result and `isError` flag.
+`tool_execution_update` receives the streaming `partialResult` emitted via `onUpdate` (often a truncated tail for bash).
+
+```typescript
+pi.on("tool_execution_update", (event, ctx) => {
+  // event.toolName, event.toolCallId, event.args
+  // event.partialResult.content (streamed output)
+});
+```
+
 ### User Bash Events
 
 #### user_bash
