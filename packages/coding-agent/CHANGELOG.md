@@ -16,7 +16,7 @@
 - Expanded the block action palette to pick a target block before choosing an action.
 - Added command palette entries and prompt status chips to reflect active block filters.
 - Added `terminal.continuaUi` setting to enable Continua UI enhancements, including output-only scrolling with a pinned prompt/footer.
-- Added `terminal.mouseTracking` setting to enable mouse scroll/click interactions in Continua UI mode.
+- Added `terminal.mouseTracking` setting (default on) to enable mouse scroll/click interactions in Continua UI mode.
 - Added mouse-click support on message/tool headers to toggle collapse in Continua UI mode.
 - Added right-click header shortcut to open block actions in Continua UI mode.
 - Added block output filtering actions with regex, case sensitivity, invert, and context line controls.
