@@ -67,6 +67,16 @@ scripts/tui-regression.sh           # Compare to snapshot
 
 Uses `packages/coding-agent/test/fixtures/tui-regression.jsonl` and a temporary agent config to capture a deterministic 80x24 TUI snapshot in tmux.
 
+### TUI Screenshot Harness (tmux + termshot)
+
+```bash
+scripts/tui-screenshots.sh --update   # Record fixtures + screenshots
+scripts/tui-screenshots.sh --compare  # Compare fixtures + regenerate screenshots
+scripts/tui-screenshots.sh            # Capture screenshots without comparison
+```
+
+Uses `packages/coding-agent/test/fixtures/tui-screenshots/*.txt` for raw snapshots and writes PNGs to `.tmp/tui-screenshots`.
+
 ## Project Structure
 
 ```

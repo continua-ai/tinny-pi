@@ -7,8 +7,31 @@ SESSION_FILE="$ROOT_DIR/packages/coding-agent/test/fixtures/tui-regression.jsonl
 OUTPUT_DIR="$ROOT_DIR/.tmp/tui-screenshots"
 RAW_DIR="$OUTPUT_DIR/raw"
 WORKSPACE_DIR="$ROOT_DIR/compaction-results/tui-screenshots-workspace"
+FIXTURES_DIR="$ROOT_DIR/packages/coding-agent/test/fixtures/tui-screenshots"
 TERM_COLUMNS=${TERM_COLUMNS:-100}
 TERM_ROWS=${TERM_ROWS:-28}
+
+COMPARE=false
+UPDATE=false
+
+for arg in "$@"; do
+	case "$arg" in
+		--compare)
+			COMPARE=true
+			;;
+		--update)
+			UPDATE=true
+			;;
+		--help|-h)
+			echo "Usage: scripts/tui-screenshots.sh [--compare] [--update]"
+			exit 0
+			;;
+	esac
+done
+
+if [ "$UPDATE" = true ]; then
+	COMPARE=false
+fi
 
 if ! command -v tmux >/dev/null 2>&1; then
 	echo "tmux is required to run the TUI screenshot harness."
@@ -104,6 +127,30 @@ wait_for_text() {
 	return 1
 }
 
+compare_raw() {
+	local name="$1"
+	local raw_file="$RAW_DIR/${name}.txt"
+	local fixture_file="$FIXTURES_DIR/${name}.txt"
+
+	if [ "$UPDATE" = true ]; then
+		mkdir -p "$FIXTURES_DIR"
+		cp "$raw_file" "$fixture_file"
+		echo "Updated fixture: $fixture_file"
+		return 0
+	fi
+
+	if [ "$COMPARE" = true ]; then
+		if [ ! -f "$fixture_file" ]; then
+			echo "Missing screenshot fixture: $fixture_file"
+			exit 1
+		fi
+		if ! diff -u "$fixture_file" "$raw_file"; then
+			echo "Screenshot snapshot mismatch for $name. Raw output: $raw_file"
+			exit 1
+		fi
+	fi
+}
+
 capture_screen() {
 	local name="$1"
 	local raw_file="$RAW_DIR/${name}.txt"
@@ -118,6 +165,7 @@ capture_screen() {
 		--clip-canvas \
 		>/dev/null
 	echo "Wrote $png_file"
+	compare_raw "$name"
 }
 
 if ! wait_for_text "Step 1"; then

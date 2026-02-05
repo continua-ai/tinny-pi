@@ -18,6 +18,10 @@
 - Added `terminal.continuaUi` setting to enable Continua UI enhancements, including output-only scrolling with a pinned prompt/footer.
 - Added mouse-click support on message/tool headers to toggle collapse in Continua UI mode.
 - Added right-click header shortcut to open block actions in Continua UI mode.
+- Added block output filtering actions with regex, case sensitivity, invert, and context line controls.
+- Added block search and bookmark palettes for quick navigation across messages and tool output.
+- Added command palette entries for current-session history and session-wide command search.
+- Added block action navigation to jump to the start or end of a block in Continua UI mode.
 
 ### Changed
 

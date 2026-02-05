@@ -19,6 +19,13 @@ import type { ToolDefinition } from "../../../core/extensions/types.js";
 import { computeEditDiff, type EditDiffError, type EditDiffResult } from "../../../core/tools/edit-diff.js";
 import { allTools } from "../../../core/tools/index.js";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize } from "../../../core/tools/truncate.js";
+import {
+	applyOutputFilter,
+	type BlockOutputFilter,
+	type BlockOutputFilterResult,
+	formatOutputFilterLabel,
+	normalizeOutputFilter,
+} from "../../../utils/block-output-filter.js";
 import { convertToPng } from "../../../utils/image-convert.js";
 import { sanitizeBinaryOutput } from "../../../utils/shell.js";
 import { getLanguageFromPath, highlightCode, theme } from "../theme/theme.js";
@@ -68,6 +75,14 @@ export class ToolExecutionComponent extends Container {
 	private step?: number;
 	private expanded = false;
 	private headerMarker?: string;
+	private headerBadge?: string;
+	private outputFilter?: BlockOutputFilter;
+	private outputFilterCache?: {
+		outputVersion: number;
+		filterKey: string;
+		result: BlockOutputFilterResult | null;
+	};
+	private outputVersion = 0;
 	private showImages: boolean;
 	private isPartial = true;
 	private toolDefinition?: ToolDefinition;
@@ -135,6 +150,8 @@ export class ToolExecutionComponent extends Container {
 
 	updateArgs(args: any): void {
 		this.args = args;
+		this.outputVersion += 1;
+		this.outputFilterCache = undefined;
 		this.updateDisplay();
 	}
 
@@ -189,6 +206,8 @@ export class ToolExecutionComponent extends Container {
 	): void {
 		this.result = result;
 		this.isPartial = isPartial;
+		this.outputVersion += 1;
+		this.outputFilterCache = undefined;
 		this.updateDisplay();
 		// Convert non-PNG images to PNG for Kitty protocol (async)
 		this.maybeConvertImagesForKitty();
@@ -241,6 +260,43 @@ export class ToolExecutionComponent extends Container {
 		this.updateDisplay();
 	}
 
+	setHeaderBadge(badge?: string): void {
+		if (this.headerBadge === badge) return;
+		this.headerBadge = badge;
+		this.updateDisplay();
+	}
+
+	setOutputFilter(filter?: BlockOutputFilter): void {
+		this.outputFilter = filter;
+		this.outputFilterCache = undefined;
+		this.updateDisplay();
+	}
+
+	getOutputFilter(): BlockOutputFilter | undefined {
+		return this.outputFilter;
+	}
+
+	supportsOutputFilter(): boolean {
+		return this.shouldUseBuiltInRenderer() && this.toolName !== "edit";
+	}
+
+	getBlockText(): string {
+		const sections: string[] = [];
+		sections.push(this.toolName);
+		if (this.args !== undefined) {
+			try {
+				sections.push(JSON.stringify(this.args, null, 2));
+			} catch {
+				// ignore arg serialization errors
+			}
+		}
+		const output = this.getTextOutput();
+		if (output) {
+			sections.push(output);
+		}
+		return sections.join("\n");
+	}
+
 	override invalidate(): void {
 		super.invalidate();
 		this.updateDisplay();
@@ -250,6 +306,69 @@ export class ToolExecutionComponent extends Container {
 		const result = super.renderViewport(width, viewport);
 		const lines = applyStickyHeader(result.lines, viewport.top, { scanLimit: 24, viewportHeight: viewport.height });
 		return { lines, contentHeight: result.contentHeight };
+	}
+
+	private getHeaderPrefix(): string {
+		return `${this.headerMarker ?? ""}${this.headerBadge ?? ""}`;
+	}
+
+	private getFilterHeaderSuffix(): string {
+		if (!this.outputFilter || !this.supportsOutputFilter()) return "";
+		if (!this.outputFilter.query.trim()) return "";
+		const label = formatOutputFilterLabel(this.outputFilter);
+		return theme.fg("muted", ` [filter: ${label}]`);
+	}
+
+	private getOutputFilterResult(rawLines: string[], displayLines: string[]): BlockOutputFilterResult | null {
+		if (!this.outputFilter || !this.supportsOutputFilter()) return null;
+		const normalized = normalizeOutputFilter(this.outputFilter);
+		if (!normalized.query) return null;
+		const filterKey = JSON.stringify(normalized);
+		if (
+			this.outputFilterCache &&
+			this.outputFilterCache.outputVersion === this.outputVersion &&
+			this.outputFilterCache.filterKey === filterKey
+		) {
+			return this.outputFilterCache.result;
+		}
+		const result = applyOutputFilter(rawLines, displayLines, normalized);
+		this.outputFilterCache = {
+			outputVersion: this.outputVersion,
+			filterKey,
+			result,
+		};
+		return result;
+	}
+
+	private formatFilterHint(result: BlockOutputFilterResult): string {
+		if (result.error) {
+			return theme.fg("warning", `[Filter error: ${result.error}]`);
+		}
+		const label = this.outputFilter ? formatOutputFilterLabel(this.outputFilter) : "filter";
+		const matchLabel = result.matchCount === 1 ? "match" : "matches";
+		return theme.fg(
+			"muted",
+			`[Filter: ${label} · ${result.matchCount} ${matchLabel} · ${result.lines.length}/${result.totalLines} lines]`,
+		);
+	}
+
+	private applyOutputFilterToLines(
+		rawLines: string[],
+		displayLines: string[],
+	): {
+		lines: string[];
+		hint?: string;
+		result?: BlockOutputFilterResult;
+	} {
+		const result = this.getOutputFilterResult(rawLines, displayLines);
+		if (!result) {
+			return { lines: displayLines };
+		}
+		const hint = this.formatFilterHint(result);
+		if (!result.filtered) {
+			return { lines: displayLines, hint, result };
+		}
+		return { lines: result.lines, hint, result };
 	}
 
 	private updateDisplay(): void {
@@ -373,11 +492,11 @@ export class ToolExecutionComponent extends Container {
 	}
 
 	private getStepHeaderMarker(): string {
-		return this.step !== undefined ? (this.headerMarker ?? "") : "";
+		return this.step !== undefined ? this.getHeaderPrefix() : "";
 	}
 
 	private getToolHeaderMarker(): string {
-		return this.step === undefined ? (this.headerMarker ?? "") : "";
+		return this.step === undefined ? this.getHeaderPrefix() : "";
 	}
 
 	private formatStepCardText(): string {
@@ -459,9 +578,10 @@ export class ToolExecutionComponent extends Container {
 		// Header
 		const timeoutSuffix = timeout ? theme.fg("muted", ` (timeout ${timeout}s)`) : "";
 		const headerMarker = this.getToolHeaderMarker();
+		const filterSuffix = this.getFilterHeaderSuffix();
 		this.contentBox.addChild(
 			new Text(
-				`${headerMarker}${theme.fg("toolTitle", theme.bold(`$ ${command || theme.fg("toolOutput", "...")}`))}${timeoutSuffix}`,
+				`${headerMarker}${theme.fg("toolTitle", theme.bold(`$ ${command || theme.fg("toolOutput", "...")}`))}${timeoutSuffix}${filterSuffix}`,
 				0,
 				0,
 			),
@@ -471,15 +591,17 @@ export class ToolExecutionComponent extends Container {
 			const output = this.getTextOutput().trim();
 
 			if (output) {
-				// Style each line for the output
-				const styledOutput = output
-					.split("\n")
-					.map((line) => theme.fg("toolOutput", line))
-					.join("\n");
+				const rawLines = output.split("\n");
+				const styledLines = rawLines.map((line) => theme.fg("toolOutput", line));
+				const { lines: filteredLines, hint } = this.applyOutputFilterToLines(rawLines, styledLines);
+				const styledOutput = filteredLines.join("\n");
 
 				if (this.expanded) {
 					// Show all lines when expanded
 					this.contentBox.addChild(new Text(`\n${styledOutput}`, 0, 0));
+					if (hint) {
+						this.contentBox.addChild(new Text(`\n${hint}`, 0, 0));
+					}
 				} else {
 					// Use visual line truncation when collapsed with width-aware caching
 					let cachedWidth: number | undefined;
@@ -494,14 +616,22 @@ export class ToolExecutionComponent extends Container {
 								cachedSkipped = result.skippedCount;
 								cachedWidth = width;
 							}
+							const lines: string[] = [];
 							if (cachedSkipped && cachedSkipped > 0) {
-								const hint =
+								const skippedHint =
 									theme.fg("muted", `... (${cachedSkipped} earlier lines,`) +
 									` ${keyHint("expandTools", "to expand")})`;
-								return ["", truncateToWidth(hint, width, "..."), ...cachedLines];
+								lines.push("", truncateToWidth(skippedHint, width, "..."));
+							} else {
+								lines.push("");
 							}
-							// Add blank line for spacing (matches expanded case)
-							return ["", ...cachedLines];
+							if (cachedLines && cachedLines.length > 0) {
+								lines.push(...cachedLines);
+							}
+							if (hint) {
+								lines.push(truncateToWidth(hint, width, "..."));
+							}
+							return lines;
 						},
 						invalidate: () => {
 							cachedWidth = undefined;
@@ -565,6 +695,7 @@ export class ToolExecutionComponent extends Container {
 	private formatToolExecution(): string {
 		let text = "";
 		const headerMarker = this.getToolHeaderMarker();
+		const filterSuffix = this.getFilterHeaderSuffix();
 
 		if (this.toolName === "read") {
 			const path = shortenPath(this.args?.file_path || this.args?.path || "");
@@ -578,25 +709,30 @@ export class ToolExecutionComponent extends Container {
 				pathDisplay += theme.fg("warning", `:${startLine}${endLine ? `-${endLine}` : ""}`);
 			}
 
-			text = `${headerMarker}${theme.fg("toolTitle", theme.bold("read"))} ${pathDisplay}`;
+			text = `${headerMarker}${theme.fg("toolTitle", theme.bold("read"))} ${pathDisplay}${filterSuffix}`;
 
 			if (this.result) {
 				const output = this.getTextOutput();
 				const rawPath = this.args?.file_path || this.args?.path || "";
 				const lang = getLanguageFromPath(rawPath);
-				const lines = lang ? highlightCode(replaceTabs(output), lang) : output.split("\n");
+				const rawOutput = replaceTabs(output);
+				const rawLines = rawOutput.split("\n");
+				const displayLines = lang ? highlightCode(rawOutput, lang) : rawLines;
+				const { lines: filteredLines, hint } = this.applyOutputFilterToLines(rawLines, displayLines);
 
-				const maxLines = this.expanded ? lines.length : 10;
-				const displayLines = lines.slice(0, maxLines);
-				const remaining = lines.length - maxLines;
+				const maxLines = this.expanded ? filteredLines.length : 10;
+				const visibleLines = filteredLines.slice(0, maxLines);
+				const remaining = filteredLines.length - maxLines;
+				const styledLines = lang
+					? visibleLines.map((line: string) => replaceTabs(line))
+					: visibleLines.map((line: string) => theme.fg("toolOutput", replaceTabs(line)));
 
-				text +=
-					"\n\n" +
-					displayLines
-						.map((line: string) => (lang ? replaceTabs(line) : theme.fg("toolOutput", replaceTabs(line))))
-						.join("\n");
+				text += `\n\n${styledLines.join("\n")}`;
 				if (remaining > 0) {
 					text += `${theme.fg("muted", `\n... (${remaining} more lines,`)} ${keyHint("expandTools", "to expand")})`;
+				}
+				if (hint) {
+					text += `\n${hint}`;
 				}
 
 				const truncation = this.result.details?.truncation;
@@ -630,33 +766,39 @@ export class ToolExecutionComponent extends Container {
 			const path = shortenPath(rawPath);
 			const fileContent = this.args?.content || "";
 			const lang = getLanguageFromPath(rawPath);
-			const lines = fileContent
-				? lang
-					? highlightCode(replaceTabs(fileContent), lang)
-					: fileContent.split("\n")
-				: [];
-			const totalLines = lines.length;
+			const rawOutput = replaceTabs(fileContent);
+			const rawLines = fileContent ? rawOutput.split("\n") : [];
+			const displayLines = fileContent ? (lang ? highlightCode(rawOutput, lang) : rawLines) : [];
+			const {
+				lines: filteredLines,
+				hint,
+				result: filterResult,
+			} = this.applyOutputFilterToLines(rawLines, displayLines);
+			const totalLines = filterResult?.totalLines ?? filteredLines.length;
 
 			text =
 				headerMarker +
 				theme.fg("toolTitle", theme.bold("write")) +
 				" " +
-				(path ? theme.fg("accent", path) : theme.fg("toolOutput", "..."));
+				(path ? theme.fg("accent", path) : theme.fg("toolOutput", "...")) +
+				filterSuffix;
 
 			if (fileContent) {
-				const maxLines = this.expanded ? lines.length : 10;
-				const displayLines = lines.slice(0, maxLines);
-				const remaining = lines.length - maxLines;
+				const maxLines = this.expanded ? filteredLines.length : 10;
+				const visibleLines = filteredLines.slice(0, maxLines);
+				const remaining = filteredLines.length - maxLines;
+				const styledLines = lang
+					? visibleLines.map((line: string) => replaceTabs(line))
+					: visibleLines.map((line: string) => theme.fg("toolOutput", replaceTabs(line)));
 
-				text +=
-					"\n\n" +
-					displayLines
-						.map((line: string) => (lang ? replaceTabs(line) : theme.fg("toolOutput", replaceTabs(line))))
-						.join("\n");
+				text += `\n\n${styledLines.join("\n")}`;
 				if (remaining > 0) {
 					text +=
 						theme.fg("muted", `\n... (${remaining} more lines, ${totalLines} total,`) +
 						` ${keyHint("expandTools", "to expand")})`;
+				}
+				if (hint) {
+					text += `\n${hint}`;
 				}
 			}
 
@@ -682,7 +824,7 @@ export class ToolExecutionComponent extends Container {
 				pathDisplay += theme.fg("warning", `:${firstChangedLine}`);
 			}
 
-			text = `${headerMarker}${theme.fg("toolTitle", theme.bold("edit"))} ${pathDisplay}`;
+			text = `${headerMarker}${theme.fg("toolTitle", theme.bold("edit"))} ${pathDisplay}${filterSuffix}`;
 
 			if (this.result?.isError) {
 				// Show error from result
@@ -711,18 +853,24 @@ export class ToolExecutionComponent extends Container {
 			if (limit !== undefined) {
 				text += theme.fg("toolOutput", ` (limit ${limit})`);
 			}
+			text += filterSuffix;
 
 			if (this.result) {
 				const output = this.getTextOutput().trim();
 				if (output) {
-					const lines = output.split("\n");
-					const maxLines = this.expanded ? lines.length : 20;
-					const displayLines = lines.slice(0, maxLines);
-					const remaining = lines.length - maxLines;
+					const rawLines = output.split("\n");
+					const styledLines = rawLines.map((line) => theme.fg("toolOutput", line));
+					const { lines: filteredLines, hint } = this.applyOutputFilterToLines(rawLines, styledLines);
+					const maxLines = this.expanded ? filteredLines.length : 20;
+					const visibleLines = filteredLines.slice(0, maxLines);
+					const remaining = filteredLines.length - maxLines;
 
-					text += `\n\n${displayLines.map((line: string) => theme.fg("toolOutput", line)).join("\n")}`;
+					text += `\n\n${visibleLines.join("\n")}`;
 					if (remaining > 0) {
 						text += `${theme.fg("muted", `\n... (${remaining} more lines,`)} ${keyHint("expandTools", "to expand")})`;
+					}
+					if (hint) {
+						text += `\n${hint}`;
 					}
 				}
 
@@ -753,18 +901,24 @@ export class ToolExecutionComponent extends Container {
 			if (limit !== undefined) {
 				text += theme.fg("toolOutput", ` (limit ${limit})`);
 			}
+			text += filterSuffix;
 
 			if (this.result) {
 				const output = this.getTextOutput().trim();
 				if (output) {
-					const lines = output.split("\n");
-					const maxLines = this.expanded ? lines.length : 20;
-					const displayLines = lines.slice(0, maxLines);
-					const remaining = lines.length - maxLines;
+					const rawLines = output.split("\n");
+					const styledLines = rawLines.map((line) => theme.fg("toolOutput", line));
+					const { lines: filteredLines, hint } = this.applyOutputFilterToLines(rawLines, styledLines);
+					const maxLines = this.expanded ? filteredLines.length : 20;
+					const visibleLines = filteredLines.slice(0, maxLines);
+					const remaining = filteredLines.length - maxLines;
 
-					text += `\n\n${displayLines.map((line: string) => theme.fg("toolOutput", line)).join("\n")}`;
+					text += `\n\n${visibleLines.join("\n")}`;
 					if (remaining > 0) {
 						text += `${theme.fg("muted", `\n... (${remaining} more lines,`)} ${keyHint("expandTools", "to expand")})`;
+					}
+					if (hint) {
+						text += `\n${hint}`;
 					}
 				}
 
@@ -799,18 +953,24 @@ export class ToolExecutionComponent extends Container {
 			if (limit !== undefined) {
 				text += theme.fg("toolOutput", ` limit ${limit}`);
 			}
+			text += filterSuffix;
 
 			if (this.result) {
 				const output = this.getTextOutput().trim();
 				if (output) {
-					const lines = output.split("\n");
-					const maxLines = this.expanded ? lines.length : 15;
-					const displayLines = lines.slice(0, maxLines);
-					const remaining = lines.length - maxLines;
+					const rawLines = output.split("\n");
+					const styledLines = rawLines.map((line) => theme.fg("toolOutput", line));
+					const { lines: filteredLines, hint } = this.applyOutputFilterToLines(rawLines, styledLines);
+					const maxLines = this.expanded ? filteredLines.length : 15;
+					const visibleLines = filteredLines.slice(0, maxLines);
+					const remaining = filteredLines.length - maxLines;
 
-					text += `\n\n${displayLines.map((line: string) => theme.fg("toolOutput", line)).join("\n")}`;
+					text += `\n\n${visibleLines.join("\n")}`;
 					if (remaining > 0) {
 						text += `${theme.fg("muted", `\n... (${remaining} more lines,`)} ${keyHint("expandTools", "to expand")})`;
+					}
+					if (hint) {
+						text += `\n${hint}`;
 					}
 				}
 
@@ -833,13 +993,19 @@ export class ToolExecutionComponent extends Container {
 			}
 		} else {
 			// Generic tool (shouldn't reach here for custom tools)
-			text = `${headerMarker}${theme.fg("toolTitle", theme.bold(this.toolName))}`;
+			text = `${headerMarker}${theme.fg("toolTitle", theme.bold(this.toolName))}${filterSuffix}`;
 
 			const content = JSON.stringify(this.args, null, 2);
 			text += `\n\n${content}`;
 			const output = this.getTextOutput();
 			if (output) {
-				text += `\n${output}`;
+				const rawLines = output.split("\n");
+				const styledLines = rawLines.map((line) => theme.fg("toolOutput", line));
+				const { lines: filteredLines, hint } = this.applyOutputFilterToLines(rawLines, styledLines);
+				text += `\n${filteredLines.join("\n")}`;
+				if (hint) {
+					text += `\n${hint}`;
+				}
 			}
 		}
 

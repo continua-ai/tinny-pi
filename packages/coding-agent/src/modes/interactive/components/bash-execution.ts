@@ -10,6 +10,13 @@ import {
 	type TruncationResult,
 	truncateTail,
 } from "../../../core/tools/truncate.js";
+import {
+	applyOutputFilter,
+	type BlockOutputFilter,
+	type BlockOutputFilterResult,
+	formatOutputFilterLabel,
+	normalizeOutputFilter,
+} from "../../../utils/block-output-filter.js";
 import { type ThemeColor, theme } from "../theme/theme.js";
 import { DynamicBorder } from "./dynamic-border.js";
 import { editorKey, keyHint } from "./keybinding-hints.js";
@@ -21,6 +28,14 @@ const PREVIEW_LINES = 20;
 export class BashExecutionComponent extends Container {
 	private command: string;
 	private headerMarker?: string;
+	private headerBadge?: string;
+	private outputFilter?: BlockOutputFilter;
+	private outputFilterCache?: {
+		outputVersion: number;
+		filterKey: string;
+		result: BlockOutputFilterResult | null;
+	};
+	private outputVersion = 0;
 	private outputLines: string[] = [];
 	private status: "running" | "complete" | "cancelled" | "error" = "running";
 	private exitCode: number | undefined = undefined;
@@ -73,9 +88,36 @@ export class BashExecutionComponent extends Container {
 		this.updateDisplay();
 	}
 
+	setHeaderBadge(badge?: string): void {
+		if (this.headerBadge === badge) return;
+		this.headerBadge = badge;
+		this.updateDisplay();
+	}
+
+	setOutputFilter(filter?: BlockOutputFilter): void {
+		this.outputFilter = filter;
+		this.outputFilterCache = undefined;
+		this.updateDisplay();
+	}
+
+	getOutputFilter(): BlockOutputFilter | undefined {
+		return this.outputFilter;
+	}
+
+	supportsOutputFilter(): boolean {
+		return true;
+	}
+
+	getBlockText(): string {
+		const output = this.getOutput();
+		return output ? `${this.command}\n${output}` : this.command;
+	}
+
 	private formatHeaderText(colorKey: ThemeColor): string {
 		const marker = this.headerMarker ?? "";
-		return `${marker}${theme.fg(colorKey, theme.bold(`$ ${this.command}`))}`;
+		const badge = this.headerBadge ?? "";
+		const filterSuffix = this.getFilterHeaderSuffix();
+		return `${marker}${badge}${theme.fg(colorKey, theme.bold(`$ ${this.command}`))}${filterSuffix}`;
 	}
 
 	/**
@@ -106,6 +148,8 @@ export class BashExecutionComponent extends Container {
 			this.outputLines.push(...newLines);
 		}
 
+		this.outputVersion += 1;
+		this.outputFilterCache = undefined;
 		this.updateDisplay();
 	}
 
@@ -130,6 +174,65 @@ export class BashExecutionComponent extends Container {
 		this.updateDisplay();
 	}
 
+	private getFilterHeaderSuffix(): string {
+		if (!this.outputFilter) return "";
+		if (!this.outputFilter.query.trim()) return "";
+		const label = formatOutputFilterLabel(this.outputFilter);
+		return theme.fg("muted", ` [filter: ${label}]`);
+	}
+
+	private getOutputFilterResult(rawLines: string[], displayLines: string[]): BlockOutputFilterResult | null {
+		if (!this.outputFilter) return null;
+		const normalized = normalizeOutputFilter(this.outputFilter);
+		if (!normalized.query) return null;
+		const filterKey = JSON.stringify(normalized);
+		if (
+			this.outputFilterCache &&
+			this.outputFilterCache.outputVersion === this.outputVersion &&
+			this.outputFilterCache.filterKey === filterKey
+		) {
+			return this.outputFilterCache.result;
+		}
+		const result = applyOutputFilter(rawLines, displayLines, normalized);
+		this.outputFilterCache = {
+			outputVersion: this.outputVersion,
+			filterKey,
+			result,
+		};
+		return result;
+	}
+
+	private formatFilterHint(result: BlockOutputFilterResult): string {
+		if (result.error) {
+			return theme.fg("warning", `[Filter error: ${result.error}]`);
+		}
+		const label = this.outputFilter ? formatOutputFilterLabel(this.outputFilter) : "filter";
+		const matchLabel = result.matchCount === 1 ? "match" : "matches";
+		return theme.fg(
+			"muted",
+			`[Filter: ${label} · ${result.matchCount} ${matchLabel} · ${result.lines.length}/${result.totalLines} lines]`,
+		);
+	}
+
+	private applyOutputFilterToLines(
+		rawLines: string[],
+		displayLines: string[],
+	): {
+		lines: string[];
+		hint?: string;
+		result?: BlockOutputFilterResult;
+	} {
+		const result = this.getOutputFilterResult(rawLines, displayLines);
+		if (!result) {
+			return { lines: displayLines };
+		}
+		const hint = this.formatFilterHint(result);
+		if (!result.filtered) {
+			return { lines: displayLines, hint, result };
+		}
+		return { lines: result.lines, hint, result };
+	}
+
 	private updateDisplay(): void {
 		// Apply truncation for LLM context limits (same limits as bash tool)
 		const fullOutput = this.outputLines.join("\n");
@@ -140,10 +243,12 @@ export class BashExecutionComponent extends Container {
 
 		// Get the lines to potentially display (after context truncation)
 		const availableLines = contextTruncation.content ? contextTruncation.content.split("\n") : [];
+		const styledLines = availableLines.map((line) => theme.fg("muted", line));
+		const { lines: filteredLines, hint } = this.applyOutputFilterToLines(availableLines, styledLines);
 
 		// Apply preview truncation based on expanded state
-		const previewLogicalLines = availableLines.slice(-PREVIEW_LINES);
-		const hiddenLineCount = availableLines.length - previewLogicalLines.length;
+		const previewLogicalLines = filteredLines.slice(-PREVIEW_LINES);
+		const hiddenLineCount = filteredLines.length - previewLogicalLines.length;
 
 		// Rebuild content container
 		this.contentContainer.clear();
@@ -153,14 +258,14 @@ export class BashExecutionComponent extends Container {
 		this.contentContainer.addChild(header);
 
 		// Output
-		if (availableLines.length > 0) {
+		if (filteredLines.length > 0) {
 			if (this.expanded) {
 				// Show all lines
-				const displayText = availableLines.map((line) => theme.fg("muted", line)).join("\n");
+				const displayText = filteredLines.join("\n");
 				this.contentContainer.addChild(new Text(`\n${displayText}`, 1, 0));
 			} else {
 				// Use shared visual truncation utility
-				const styledOutput = previewLogicalLines.map((line) => theme.fg("muted", line)).join("\n");
+				const styledOutput = previewLogicalLines.join("\n");
 				const { visualLines } = truncateToVisualLines(
 					`\n${styledOutput}`,
 					PREVIEW_LINES,
@@ -169,6 +274,9 @@ export class BashExecutionComponent extends Container {
 				);
 				this.contentContainer.addChild({ render: () => visualLines, invalidate: () => {} });
 			}
+		}
+		if (hint) {
+			this.contentContainer.addChild(new Text(`\n${hint}`, 1, 0));
 		}
 
 		// Loader or status

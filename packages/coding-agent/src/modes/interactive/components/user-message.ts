@@ -19,6 +19,7 @@ export class UserMessageComponent extends Container {
 	private collapsed = false;
 	private contentContainer: Container;
 	private headerMarker?: string;
+	private headerBadge?: string;
 
 	constructor(text: string, markdownTheme: MarkdownTheme = getMarkdownTheme()) {
 		super();
@@ -38,6 +39,12 @@ export class UserMessageComponent extends Container {
 	setHeaderMarker(marker?: string): void {
 		if (this.headerMarker === marker) return;
 		this.headerMarker = marker;
+		this.updateDisplay();
+	}
+
+	setHeaderBadge(badge?: string): void {
+		if (this.headerBadge === badge) return;
+		this.headerBadge = badge;
 		this.updateDisplay();
 	}
 
@@ -63,7 +70,10 @@ export class UserMessageComponent extends Container {
 		this.contentContainer.clear();
 		this.contentContainer.addChild(new Spacer(1));
 		const marker = this.headerMarker ?? "";
-		this.contentContainer.addChild(new TruncatedText(`${marker}${theme.fg("muted", theme.bold("User"))}`, 1, 0));
+		const badge = this.headerBadge ?? "";
+		this.contentContainer.addChild(
+			new TruncatedText(`${marker}${badge}${theme.fg("muted", theme.bold("User"))}`, 1, 0),
+		);
 
 		if (this.collapsed) {
 			const preview = this.getPreviewText();

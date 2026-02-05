@@ -34,6 +34,8 @@ import {
 	Container,
 	createLineMarker,
 	fuzzyFilter,
+	isViewportAware,
+	LINE_MARKER_PREFIX,
 	Loader,
 	Markdown,
 	type MouseEvent,
@@ -73,15 +75,19 @@ import type { ResourceDiagnostic } from "../../core/resource-loader.js";
 import { type SessionContext, SessionManager } from "../../core/session-manager.js";
 import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.js";
 import type { TruncationResult } from "../../core/tools/truncate.js";
+import type { BlockOutputFilter } from "../../utils/block-output-filter.js";
 import { getChangelogPath, getNewEntries, parseChangelog } from "../../utils/changelog.js";
 import { copyToClipboard } from "../../utils/clipboard.js";
 import { extensionForImageMimeType, readClipboardImage } from "../../utils/clipboard-image.js";
+import { type CommandSearchEntry, CommandSearchIndex } from "../../utils/command-search.js";
 import { type GitStatusSummary, getGitStatusSummary } from "../../utils/git-status.js";
 import { ensureTool } from "../../utils/tools-manager.js";
 import { ArminComponent } from "./components/armin.js";
 import { AssistantMessageComponent } from "./components/assistant-message.js";
 import { BashExecutionComponent } from "./components/bash-execution.js";
 import { type BlockActionItem, BlockActionPaletteComponent } from "./components/block-action-palette.js";
+import { BlockOutputFilterComponent } from "./components/block-output-filter.js";
+import { BlockSearchComponent } from "./components/block-search.js";
 import { BorderedLoader } from "./components/bordered-loader.js";
 import { BranchSummaryMessageComponent } from "./components/branch-summary-message.js";
 import { CommandPaletteComponent, type CommandPaletteItem } from "./components/command-palette.js";
@@ -149,6 +155,43 @@ function isHeaderMarkerTarget(obj: unknown): obj is HeaderMarkerTarget {
 	return (
 		typeof obj === "object" && obj !== null && "setHeaderMarker" in obj && typeof obj.setHeaderMarker === "function"
 	);
+}
+
+interface HeaderBadgeTarget {
+	setHeaderBadge(badge?: string): void;
+}
+
+function isHeaderBadgeTarget(obj: unknown): obj is HeaderBadgeTarget {
+	return (
+		typeof obj === "object" && obj !== null && "setHeaderBadge" in obj && typeof obj.setHeaderBadge === "function"
+	);
+}
+
+interface OutputFilterTarget {
+	setOutputFilter(filter?: BlockOutputFilter): void;
+	getOutputFilter(): BlockOutputFilter | undefined;
+	supportsOutputFilter(): boolean;
+}
+
+function isOutputFilterTarget(obj: unknown): obj is OutputFilterTarget {
+	return (
+		typeof obj === "object" &&
+		obj !== null &&
+		"setOutputFilter" in obj &&
+		"getOutputFilter" in obj &&
+		"supportsOutputFilter" in obj &&
+		typeof obj.setOutputFilter === "function" &&
+		typeof obj.getOutputFilter === "function" &&
+		typeof obj.supportsOutputFilter === "function"
+	);
+}
+
+interface BlockTextTarget {
+	getBlockText(): string;
+}
+
+function isBlockTextTarget(obj: unknown): obj is BlockTextTarget {
+	return typeof obj === "object" && obj !== null && "getBlockText" in obj && typeof obj.getBlockText === "function";
 }
 
 type BlockActionKind = "user" | "assistant" | "tool";
@@ -250,6 +293,9 @@ export class InteractiveMode {
 
 	// Block action palette state
 	private blockActionTargets: BlockActionTarget[] = [];
+	private blockActionTargetById = new Map<string, BlockActionTarget>();
+	private blockBookmarks = new Set<string>();
+	private blockOutputFilters = new Map<string, BlockOutputFilter>();
 	private blockActionId = 0;
 	private blockCollapseState = new Map<string, boolean>();
 	private toolExpandState = new Map<string, boolean>();
@@ -261,6 +307,12 @@ export class InteractiveMode {
 
 	// Skill commands: command name -> skill file path
 	private skillCommands = new Map<string, string>();
+
+	// Command search indexing
+	private commandSearchIndex = new CommandSearchIndex({
+		maxSessions: InteractiveMode.MAX_COMMAND_SEARCH_SESSIONS,
+		maxCommandsPerSession: InteractiveMode.MAX_COMMAND_SEARCH_PER_SESSION,
+	});
 
 	// Agent subscription unsubscribe function
 	private unsubscribe?: () => void;
@@ -1335,6 +1387,16 @@ export class InteractiveMode {
 	// Maximum number of block action targets shown in the palette
 	private static readonly MAX_BLOCK_ACTION_TARGETS = 50;
 
+	// Maximum number of history items shown in command search
+	private static readonly MAX_COMMAND_HISTORY_ITEMS = 200;
+
+	// Maximum number of command search items from sessions
+	private static readonly MAX_COMMAND_SEARCH_ITEMS = 500;
+
+	// Limits for session-based command indexing
+	private static readonly MAX_COMMAND_SEARCH_SESSIONS = 200;
+	private static readonly MAX_COMMAND_SEARCH_PER_SESSION = 40;
+
 	/**
 	 * Render all extension widgets to the widget container.
 	 */
@@ -1376,7 +1438,7 @@ export class InteractiveMode {
 		const marker = this.ui.getLineMarkerAt(event.y);
 		if (!marker) return;
 
-		const target = this.blockActionTargets.find((candidate) => candidate.id === marker);
+		const target = this.blockActionTargetById.get(marker);
 		if (!target) return;
 
 		if (event.button === "right") {
@@ -1987,7 +2049,9 @@ export class InteractiveMode {
 		this.defaultEditor.onAction("toggleBlocks", () => this.toggleBlocksCollapsed());
 		this.defaultEditor.onAction("cycleBlockFilter", () => this.cycleBlockFilterMode());
 		this.defaultEditor.onAction("blockActions", () => this.showBlockActionPalette());
-		this.defaultEditor.onAction("commandPalette", () => this.showCommandPalette());
+		this.defaultEditor.onAction("commandPalette", () => {
+			void this.showCommandPalette();
+		});
 		this.defaultEditor.onAction("toggleThinking", () => this.toggleThinkingBlockVisibility());
 		this.defaultEditor.onAction("externalEditor", () => this.openExternalEditor());
 		this.defaultEditor.onAction("followUp", () => this.handleFollowUp());
@@ -2591,6 +2655,9 @@ export class InteractiveMode {
 
 	private resetBlockActionTargets(): void {
 		this.blockActionTargets = [];
+		this.blockActionTargetById.clear();
+		this.blockBookmarks.clear();
+		this.blockOutputFilters.clear();
 		this.blockActionId = 0;
 		this.blockCollapseState.clear();
 		this.toolExpandState.clear();
@@ -2606,6 +2673,7 @@ export class InteractiveMode {
 	private registerBlockActionTarget(target: Omit<BlockActionTarget, "id">): BlockActionTarget {
 		const fullTarget: BlockActionTarget = { id: this.nextBlockActionId(), ...target };
 		this.blockActionTargets.push(fullTarget);
+		this.blockActionTargetById.set(fullTarget.id, fullTarget);
 		if (fullTarget.kind === "user" || fullTarget.kind === "assistant") {
 			this.blockCollapseState.set(fullTarget.id, this.blocksCollapsed);
 		}
@@ -2615,19 +2683,39 @@ export class InteractiveMode {
 				this.toolTargetByCallId.set(fullTarget.toolCallId, fullTarget);
 			}
 		}
-		this.applyBlockHeaderMarker(fullTarget);
+		this.applyBlockHeaderState(fullTarget);
+		this.applyBlockOutputFilter(fullTarget);
 		return fullTarget;
 	}
 
-	private applyBlockHeaderMarker(target: BlockActionTarget): void {
-		if (!isHeaderMarkerTarget(target.component)) return;
-		const marker = this.continuaUiEnabled ? createLineMarker(target.id) : undefined;
-		target.component.setHeaderMarker(marker);
+	private getBookmarkBadge(targetId: string): string | undefined {
+		if (!this.blockBookmarks.has(targetId)) return undefined;
+		return theme.fg("accent", "★ ");
+	}
+
+	private applyBlockHeaderState(target: BlockActionTarget): void {
+		if (isHeaderMarkerTarget(target.component)) {
+			const marker = this.continuaUiEnabled ? createLineMarker(target.id) : undefined;
+			target.component.setHeaderMarker(marker);
+		}
+		if (isHeaderBadgeTarget(target.component)) {
+			target.component.setHeaderBadge(this.getBookmarkBadge(target.id));
+		}
+	}
+
+	private applyBlockOutputFilter(target: BlockActionTarget): void {
+		if (!isOutputFilterTarget(target.component)) return;
+		const filter = this.blockOutputFilters.get(target.id);
+		if (filter && target.component.supportsOutputFilter()) {
+			target.component.setOutputFilter(filter);
+		} else {
+			target.component.setOutputFilter(undefined);
+		}
 	}
 
 	private updateBlockHeaderMarkers(): void {
 		for (const target of this.blockActionTargets) {
-			this.applyBlockHeaderMarker(target);
+			this.applyBlockHeaderState(target);
 		}
 	}
 
@@ -2698,6 +2786,235 @@ export class InteractiveMode {
 		}
 	}
 
+	private getBlockSearchText(target: BlockActionTarget): string {
+		if (target.kind === "user" || target.kind === "assistant") {
+			return target.text ?? "";
+		}
+		if (isBlockTextTarget(target.component)) {
+			return target.component.getBlockText();
+		}
+		return "";
+	}
+
+	private showBlockSearch(target: BlockActionTarget): void {
+		const text = this.getBlockSearchText(target);
+		if (!text.trim()) {
+			this.showStatus("No searchable text for this block");
+			return;
+		}
+
+		this.showSelector((done) => {
+			const search = new BlockSearchComponent(
+				`Find in block • ${target.label}`,
+				text,
+				(result) => {
+					done();
+					this.ensureBlockExpandedForNavigation(target);
+					this.scrollToBlock(target.id);
+					this.showStatus(`Jumped to line ${result.lineIndex + 1} in ${target.label}`);
+					this.ui.requestRender();
+				},
+				() => {
+					done();
+					this.ui.requestRender();
+				},
+			);
+			return { component: search, focus: search };
+		});
+	}
+
+	private ensureBlockExpandedForNavigation(target: BlockActionTarget): void {
+		if (target.kind === "tool") {
+			this.setToolExpandedForTarget(target, true);
+			return;
+		}
+		this.setBlockCollapsedForTarget(target, false);
+	}
+
+	private toggleBlockBookmark(target: BlockActionTarget): void {
+		if (this.blockBookmarks.has(target.id)) {
+			this.blockBookmarks.delete(target.id);
+			this.showStatus("Bookmark removed");
+		} else {
+			this.blockBookmarks.add(target.id);
+			this.showStatus("Bookmark added");
+		}
+		this.applyBlockHeaderState(target);
+		this.ui.requestRender();
+	}
+
+	private showBlockBookmarksPalette(): void {
+		const targets = this.blockActionTargets.filter(
+			(target) => this.blockBookmarks.has(target.id) && this.chatContainer.children.includes(target.component),
+		);
+		if (targets.length === 0) {
+			this.showStatus("No bookmarked blocks");
+			return;
+		}
+
+		const targetById = new Map(targets.map((target) => [target.id, target]));
+		const items: CommandPaletteItem[] = targets.map((target) => ({
+			id: target.id,
+			label: target.label,
+			description: this.formatBlockTargetDescription(target) ?? "Bookmark",
+			searchText: `${target.label} ${this.formatBlockTargetDescription(target) ?? ""} bookmark`,
+		}));
+
+		this.showSelector((done) => {
+			const palette = new CommandPaletteComponent(
+				"Block bookmarks",
+				items,
+				(item) => {
+					done();
+					const target = targetById.get(item.id);
+					if (!target) {
+						this.showStatus("Bookmark no longer available");
+						return;
+					}
+					this.ensureBlockExpandedForNavigation(target);
+					this.scrollToBlock(target.id);
+					this.ui.requestRender();
+				},
+				() => {
+					done();
+					this.ui.requestRender();
+				},
+			);
+			return { component: palette, focus: palette };
+		});
+	}
+
+	private showBlockOutputFilter(target: BlockActionTarget): void {
+		if (!isOutputFilterTarget(target.component) || !target.component.supportsOutputFilter()) {
+			this.showStatus("Output filtering is not available for this block");
+			return;
+		}
+		const currentFilter = this.blockOutputFilters.get(target.id);
+		this.showSelector((done) => {
+			const filter = new BlockOutputFilterComponent(
+				`Filter output • ${target.label}`,
+				currentFilter,
+				(nextFilter) => {
+					done();
+					this.setBlockOutputFilter(target, nextFilter);
+					this.ui.requestRender();
+				},
+				() => {
+					done();
+					this.ui.requestRender();
+				},
+			);
+			return { component: filter, focus: filter };
+		});
+	}
+
+	private setBlockOutputFilter(target: BlockActionTarget, filter?: BlockOutputFilter): void {
+		if (!isOutputFilterTarget(target.component)) return;
+		if (filter) {
+			this.blockOutputFilters.set(target.id, filter);
+		} else {
+			this.blockOutputFilters.delete(target.id);
+		}
+		this.applyBlockOutputFilter(target);
+		this.ui.requestRender();
+	}
+
+	private scrollToBlock(targetId: string, position: "start" | "end" = "start"): void {
+		if (!this.continuaUiEnabled || !this.scrollLayout.getScrollEnabled()) {
+			this.showStatus("Enable Continua UI to jump to blocks");
+			return;
+		}
+		const range = this.getBlockLineRange(targetId);
+		if (!range) {
+			this.showStatus("Block position not found");
+			return;
+		}
+		const width = this.ui.terminal.columns;
+		const availableHeight = this.getOutputViewportHeight(width);
+		const targetTop =
+			position === "end" ? Math.max(0, range.end - Math.max(0, availableHeight - 1)) : Math.max(0, range.start - 1);
+		const delta = targetTop - this.scrollLayout.getScrollTop();
+		if (delta !== 0) {
+			this.scrollLayout.scrollBy(delta);
+		}
+		this.ui.requestRender();
+	}
+
+	private getBlockLineRange(targetId: string): { start: number; end: number } | null {
+		const width = this.ui.terminal.columns;
+		const { lineMap, lineOrder, totalLines } = this.buildBlockLineIndex(width);
+		const start = lineMap.get(targetId);
+		if (start === undefined) {
+			return null;
+		}
+		const orderIndex = lineOrder.indexOf(targetId);
+		const nextId = orderIndex >= 0 ? lineOrder[orderIndex + 1] : undefined;
+		const nextStart = nextId ? lineMap.get(nextId) : undefined;
+		const end = nextStart !== undefined ? Math.max(start, nextStart - 1) : Math.max(start, totalLines - 1);
+		return { start, end };
+	}
+
+	private getOutputViewportHeight(width: number): number {
+		const viewportHeight = this.ui.terminal.rows;
+		const fixedLines = this.fixedContainer.render(width);
+		const fixedHeight = Math.min(fixedLines.length, viewportHeight);
+		return Math.max(0, viewportHeight - fixedHeight);
+	}
+
+	private buildBlockLineIndex(width: number): {
+		lineMap: Map<string, number>;
+		lineOrder: string[];
+		totalLines: number;
+	} {
+		const lineMap = new Map<string, number>();
+		const lineOrder: string[] = [];
+		let offset = 0;
+		for (const child of this.outputContainer.children) {
+			const lines = this.renderComponentLines(child, width);
+			this.extractLineMarkers(lines, offset, lineMap, lineOrder);
+			offset += lines.length;
+		}
+		return { lineMap, lineOrder, totalLines: offset };
+	}
+
+	private renderComponentLines(component: Component, width: number): string[] {
+		if (isViewportAware(component)) {
+			return component.renderViewport(width, { width, height: Number.MAX_SAFE_INTEGER, top: 0 }).lines;
+		}
+		return component.render(width);
+	}
+
+	private extractLineMarkers(lines: string[], offset: number, map: Map<string, number>, lineOrder: string[]): void {
+		for (let i = 0; i < lines.length; i += 1) {
+			const line = lines[i] ?? "";
+			let cursor = 0;
+			while (cursor < line.length) {
+				const markerIndex = line.indexOf(LINE_MARKER_PREFIX, cursor);
+				if (markerIndex === -1) break;
+				const parsed = this.parseLineMarker(line, markerIndex);
+				if (parsed) {
+					if (!map.has(parsed.id)) {
+						map.set(parsed.id, offset + i);
+						lineOrder.push(parsed.id);
+					}
+					cursor = parsed.endIndex;
+				} else {
+					cursor = markerIndex + LINE_MARKER_PREFIX.length;
+				}
+			}
+		}
+	}
+
+	private parseLineMarker(line: string, index: number): { id: string; endIndex: number } | null {
+		if (!line.startsWith(LINE_MARKER_PREFIX, index)) return null;
+		const start = index + LINE_MARKER_PREFIX.length;
+		const end = line.indexOf("\x07", start);
+		if (end === -1) return null;
+		const id = line.slice(start, end);
+		if (!id) return null;
+		return { id, endIndex: end + 1 };
+	}
+
 	private toggleBlockCollapsedForTarget(target: BlockActionTarget): void {
 		if (!isBlockCollapsible(target.component)) return;
 		const current = this.blockCollapseState.get(target.id) ?? this.blocksCollapsed;
@@ -2707,6 +3024,12 @@ export class InteractiveMode {
 		this.ui.requestRender();
 	}
 
+	private setBlockCollapsedForTarget(target: BlockActionTarget, collapsed: boolean): void {
+		if (!isBlockCollapsible(target.component)) return;
+		target.component.setCollapsed(collapsed);
+		this.blockCollapseState.set(target.id, collapsed);
+	}
+
 	private toggleToolExpandedForTarget(target: BlockActionTarget): void {
 		if (!isExpandable(target.component)) return;
 		const current = this.toolExpandState.get(target.id) ?? this.toolOutputExpanded;
@@ -2714,6 +3037,12 @@ export class InteractiveMode {
 		target.component.setExpanded(next);
 		this.toolExpandState.set(target.id, next);
 		this.ui.requestRender();
+	}
+
+	private setToolExpandedForTarget(target: BlockActionTarget, expanded: boolean): void {
+		if (!isExpandable(target.component)) return;
+		target.component.setExpanded(expanded);
+		this.toolExpandState.set(target.id, expanded);
 	}
 
 	private buildBlockActionItems(target: BlockActionTarget): {
@@ -2727,6 +3056,18 @@ export class InteractiveMode {
 			items.push({ id, label, description });
 			handlers.set(id, handler);
 		};
+
+		const searchText = this.getBlockSearchText(target);
+		if (searchText.trim()) {
+			add("find-block", "Find in block", () => this.showBlockSearch(target));
+		}
+		const isBookmarked = this.blockBookmarks.has(target.id);
+		add("toggle-bookmark", isBookmarked ? "Remove bookmark" : "Add bookmark", () => this.toggleBlockBookmark(target));
+
+		if (this.continuaUiEnabled && this.scrollLayout.getScrollEnabled()) {
+			add("jump-block-start", "Jump to block start", () => this.scrollToBlock(target.id, "start"));
+			add("jump-block-end", "Jump to block end", () => this.scrollToBlock(target.id, "end"));
+		}
 
 		if (target.kind === "user" || target.kind === "assistant") {
 			if (target.text?.trim()) {
@@ -2745,6 +3086,12 @@ export class InteractiveMode {
 			add("copy-tool-call", `Copy ${toolName} call`, () =>
 				this.copyBlockText(this.formatToolCallText(target), `${toolName} call`),
 			);
+			if (isOutputFilterTarget(target.component) && target.component.supportsOutputFilter()) {
+				const hasFilter = this.blockOutputFilters.has(target.id);
+				add("filter-output", hasFilter ? "Edit output filter" : "Filter output", () =>
+					this.showBlockOutputFilter(target),
+				);
+			}
 			if (isExpandable(target.component)) {
 				add("toggle-tool-output", "Toggle tool output", () => this.toggleToolExpandedForTarget(target));
 			}
@@ -2860,10 +3207,76 @@ export class InteractiveMode {
 		this.ui.requestRender();
 	}
 
-	private buildCommandPaletteItems(): {
+	private formatCommandLabel(text: string): string {
+		const summary = this.formatBlockSummary(text);
+		return summary || "(empty command)";
+	}
+
+	private getCommandSourceLabel(entry: CommandSearchEntry): string {
+		return entry.type === "bash" ? "Bash" : "Prompt";
+	}
+
+	private getCommandText(message: AgentMessage): { text: string; type: "user" | "bash" } | null {
+		if (message.role === "bashExecution") {
+			return { text: message.command, type: "bash" };
+		}
+		if (message.role !== "user") return null;
+		if (typeof message.content === "string") {
+			const trimmed = message.content.trim();
+			return trimmed ? { text: message.content, type: "user" } : null;
+		}
+		if (Array.isArray(message.content)) {
+			const parts = message.content.filter((c): c is TextContent => c.type === "text").map((c) => c.text);
+			const joined = parts.join("");
+			return joined.trim() ? { text: joined, type: "user" } : null;
+		}
+		return null;
+	}
+
+	private getCommandHistoryEntries(): CommandSearchEntry[] {
+		const entries = this.sessionManager.getEntries();
+		const history: CommandSearchEntry[] = [];
+		for (const entry of entries) {
+			if (entry.type !== "message") continue;
+			const command = this.getCommandText(entry.message);
+			if (!command) continue;
+			history.push({
+				id: entry.id,
+				text: command.text,
+				type: command.type,
+				timestamp: entry.timestamp,
+			});
+		}
+		const start = Math.max(0, history.length - InteractiveMode.MAX_COMMAND_HISTORY_ITEMS);
+		return history.slice(start).reverse();
+	}
+
+	private formatCommandSessionLabel(name?: string, cwd?: string): string {
+		if (name?.trim()) return name.trim();
+		if (cwd) return this.formatDisplayPath(cwd);
+		return "Session";
+	}
+
+	private formatRelativeTime(date: Date): string {
+		const now = new Date();
+		const diffMs = now.getTime() - date.getTime();
+		const diffMins = Math.floor(diffMs / 60000);
+		const diffHours = Math.floor(diffMs / 3600000);
+		const diffDays = Math.floor(diffMs / 86400000);
+
+		if (diffMins < 1) return "now";
+		if (diffMins < 60) return `${diffMins}m`;
+		if (diffHours < 24) return `${diffHours}h`;
+		if (diffDays < 7) return `${diffDays}d`;
+		if (diffDays < 30) return `${Math.floor(diffDays / 7)}w`;
+		if (diffDays < 365) return `${Math.floor(diffDays / 30)}mo`;
+		return `${Math.floor(diffDays / 365)}y`;
+	}
+
+	private async buildCommandPaletteItems(): Promise<{
 		items: CommandPaletteItem[];
 		handlers: Map<string, () => void | Promise<void>>;
-	} {
+	}> {
 		const items: CommandPaletteItem[] = [];
 		const handlers = new Map<string, () => void | Promise<void>>();
 
@@ -2918,6 +3331,9 @@ export class InteractiveMode {
 			"Copy or collapse a block",
 			() => this.showBlockActionPalette(),
 			appKey(keybindings, "blockActions"),
+		);
+		addAction("action:block-bookmarks", "Block bookmarks", "Jump to bookmarked blocks", () =>
+			this.showBlockBookmarksPalette(),
 		);
 		addAction(
 			"action:toggle-blocks",
@@ -3007,11 +3423,66 @@ export class InteractiveMode {
 			}
 		}
 
+		const currentSessionLabel = this.formatCommandSessionLabel(
+			this.sessionManager.getSessionName(),
+			this.sessionManager.getCwd(),
+		);
+		for (const entry of this.getCommandHistoryEntries()) {
+			const label = this.formatCommandLabel(entry.text);
+			const sourceLabel = this.getCommandSourceLabel(entry);
+			const description = `History · ${sourceLabel} · ${currentSessionLabel}`;
+			addItem(
+				{
+					id: `history:current:${entry.id}`,
+					label,
+					description,
+					searchText: `${label} ${entry.text} ${sourceLabel} ${currentSessionLabel} history`,
+				},
+				() => this.prefillEditorCommand(entry.text),
+			);
+		}
+
+		const currentSessionPath = this.sessionManager.getSessionFile();
+		const sessions = await this.commandSearchIndex.loadSessions();
+		let remainingCommands = InteractiveMode.MAX_COMMAND_SEARCH_ITEMS;
+		for (const session of sessions) {
+			if (session.path === currentSessionPath) continue;
+			const sessionLabel = this.formatCommandSessionLabel(session.name, session.cwd);
+			const ageLabel = this.formatRelativeTime(session.modified);
+			const pathLabel = session.cwd ? this.formatDisplayPath(session.cwd) : "Unknown folder";
+			addItem(
+				{
+					id: `session:${session.path}`,
+					label: sessionLabel,
+					description: `Session · ${pathLabel} · ${ageLabel}`,
+					searchText: `${sessionLabel} ${pathLabel} ${ageLabel} session`,
+				},
+				() => this.handleResumeSession(session.path),
+			);
+			for (const entry of session.commands) {
+				if (remainingCommands <= 0) break;
+				const label = this.formatCommandLabel(entry.text);
+				const sourceLabel = this.getCommandSourceLabel(entry);
+				const description = `History · ${sourceLabel} · ${sessionLabel}`;
+				addItem(
+					{
+						id: `history:${session.path}:${entry.id}`,
+						label,
+						description,
+						searchText: `${label} ${entry.text} ${sourceLabel} ${sessionLabel} history`,
+					},
+					() => this.prefillEditorCommand(entry.text),
+				);
+				remainingCommands -= 1;
+			}
+			if (remainingCommands <= 0) break;
+		}
+
 		return { items, handlers };
 	}
 
-	private showCommandPalette(): void {
-		const { items, handlers } = this.buildCommandPaletteItems();
+	private async showCommandPalette(): Promise<void> {
+		const { items, handlers } = await this.buildCommandPaletteItems();
 		if (items.length === 0) {
 			this.showStatus("No commands available");
 			return;

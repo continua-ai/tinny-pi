@@ -22,6 +22,7 @@ export class AssistantMessageComponent extends Container {
 	private lastMessage?: AssistantMessage;
 	private collapsed = false;
 	private headerMarker?: string;
+	private headerBadge?: string;
 
 	constructor(
 		message?: AssistantMessage,
@@ -67,6 +68,14 @@ export class AssistantMessageComponent extends Container {
 		}
 	}
 
+	setHeaderBadge(badge?: string): void {
+		if (this.headerBadge === badge) return;
+		this.headerBadge = badge;
+		if (this.lastMessage) {
+			this.updateContent(this.lastMessage);
+		}
+	}
+
 	setCollapsed(collapsed: boolean): void {
 		if (this.collapsed === collapsed) return;
 		this.collapsed = collapsed;
@@ -79,7 +88,8 @@ export class AssistantMessageComponent extends Container {
 		const label = theme.fg("muted", theme.bold("Assistant"));
 		const model = message.model ? theme.fg("dim", ` • ${message.model}`) : "";
 		const marker = this.headerMarker ?? "";
-		return `${marker}${label}${model}`;
+		const badge = this.headerBadge ?? "";
+		return `${marker}${badge}${label}${model}`;
 	}
 
 	private formatPreviewText(text: string): string {
