@@ -14,11 +14,20 @@ import type { SettingsManager } from "../../../core/settings-manager.js";
 import { theme } from "../theme/theme.js";
 import { DynamicBorder } from "./dynamic-border.js";
 import { keyHint } from "./keybinding-hints.js";
+import { isSubswitchEnabled } from "./subswitch-config.js";
 
 interface ModelItem {
 	provider: string;
 	id: string;
 	model: Model<any>;
+}
+
+interface DedupedModelItem {
+	id: string;
+	/** Representative model instance (used when subswitch disabled or when applying selection to session). */
+	model: Model<any>;
+	/** All providers that advertise this model id (for stable ordering + potential future UI). */
+	providers: string[];
 }
 
 interface ScopedModelItem {
@@ -44,10 +53,10 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		this.searchInput.focused = value;
 	}
 	private listContainer: Container;
-	private allModels: ModelItem[] = [];
-	private scopedModelItems: ModelItem[] = [];
-	private activeModels: ModelItem[] = [];
-	private filteredModels: ModelItem[] = [];
+	private allModels: DedupedModelItem[] = [];
+	private scopedModelItems: DedupedModelItem[] = [];
+	private activeModels: DedupedModelItem[] = [];
+	private filteredModels: DedupedModelItem[] = [];
 	private selectedIndex: number = 0;
 	private currentModel?: Model<any>;
 	private settingsManager: SettingsManager;
@@ -163,8 +172,8 @@ export class ModelSelectorComponent extends Container implements Focusable {
 			return;
 		}
 
-		this.allModels = this.sortModels(models);
-		this.scopedModelItems = this.sortModels(
+		this.allModels = this.dedupeModels(models);
+		this.scopedModelItems = this.dedupeModels(
 			this.scopedModels.map((scoped) => ({
 				provider: scoped.model.provider,
 				id: scoped.model.id,
@@ -176,17 +185,51 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		this.selectedIndex = Math.min(this.selectedIndex, Math.max(0, this.filteredModels.length - 1));
 	}
 
-	private sortModels(models: ModelItem[]): ModelItem[] {
-		const sorted = [...models];
-		// Sort: current model first, then by provider
-		sorted.sort((a, b) => {
+	private dedupeModels(models: ModelItem[]): DedupedModelItem[] {
+		// We always dedupe by model id. If multiple providers advertise the same id,
+		// we keep a stable representative model instance and record all providers.
+		const byId = new Map<
+			string,
+			{
+				model: Model<any>;
+				providers: Set<string>;
+				isCurrent: boolean;
+			}
+		>();
+
+		for (const m of models) {
+			const entry = byId.get(m.id);
+			const isCurrent = modelsAreEqual(this.currentModel, m.model);
+			if (!entry) {
+				byId.set(m.id, { model: m.model, providers: new Set([m.provider]), isCurrent });
+				continue;
+			}
+
+			entry.providers.add(m.provider);
+			// Prefer keeping the current model's provider as representative, so the checkmark
+			// behavior is stable.
+			if (!entry.isCurrent && isCurrent) {
+				entry.model = m.model;
+				entry.isCurrent = true;
+			}
+		}
+
+		const items: DedupedModelItem[] = Array.from(byId.entries()).map(([id, v]) => ({
+			id,
+			model: v.model,
+			providers: Array.from(v.providers).sort(),
+		}));
+
+		// Sort: current model first, then by id.
+		items.sort((a, b) => {
 			const aIsCurrent = modelsAreEqual(this.currentModel, a.model);
 			const bIsCurrent = modelsAreEqual(this.currentModel, b.model);
 			if (aIsCurrent && !bIsCurrent) return -1;
 			if (!aIsCurrent && bIsCurrent) return 1;
-			return a.provider.localeCompare(b.provider);
+			return a.id.localeCompare(b.id);
 		});
-		return sorted;
+
+		return items;
 	}
 
 	private getScopeText(): string {
@@ -211,9 +254,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 	}
 
 	private filterModels(query: string): void {
-		this.filteredModels = query
-			? fuzzyFilter(this.activeModels, query, ({ id, provider }) => `${id} ${provider}`)
-			: this.activeModels;
+		this.filteredModels = query ? fuzzyFilter(this.activeModels, query, ({ id }) => id) : this.activeModels;
 		this.selectedIndex = Math.min(this.selectedIndex, Math.max(0, this.filteredModels.length - 1));
 		this.updateList();
 	}
@@ -240,14 +281,12 @@ export class ModelSelectorComponent extends Container implements Focusable {
 			if (isSelected) {
 				const prefix = theme.fg("accent", "→ ");
 				const modelText = `${item.id}`;
-				const providerBadge = theme.fg("muted", `[${item.provider}]`);
 				const checkmark = isCurrent ? theme.fg("success", " ✓") : "";
-				line = `${prefix + theme.fg("accent", modelText)} ${providerBadge}${checkmark}`;
+				line = `${prefix + theme.fg("accent", modelText)}${checkmark}`;
 			} else {
 				const modelText = `  ${item.id}`;
-				const providerBadge = theme.fg("muted", `[${item.provider}]`);
 				const checkmark = isCurrent ? theme.fg("success", " ✓") : "";
-				line = `${modelText} ${providerBadge}${checkmark}`;
+				line = `${modelText}${checkmark}`;
 			}
 
 			this.listContainer.addChild(new Text(line, 0, 0));
@@ -318,8 +357,14 @@ export class ModelSelectorComponent extends Container implements Focusable {
 	}
 
 	private handleSelect(model: Model<any>): void {
-		// Save as new default
-		this.settingsManager.setDefaultModelAndProvider(model.provider, model.id);
+		// Save as new default.
+		// When subswitch (/subswitch, subscription-fallback) is enabled, treat provider selection
+		// as an access-policy concern and only persist the model id.
+		if (isSubswitchEnabled(process.cwd())) {
+			this.settingsManager.setDefaultModel(model.id);
+		} else {
+			this.settingsManager.setDefaultModelAndProvider(model.provider, model.id);
+		}
 		this.onSelectCallback(model);
 	}
 
