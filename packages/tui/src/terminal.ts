@@ -201,7 +201,7 @@ export class ProcessTerminal implements Terminal {
 		process.stdout.write("\x1b[?2004l");
 
 		if (this.mouseTrackingEnabled) {
-			process.stdout.write("\x1b[?1000l\x1b[?1006l");
+			process.stdout.write("\x1b[?1000l\x1b[?1002l\x1b[?1006l");
 			this.mouseTrackingEnabled = false;
 		}
 
@@ -294,10 +294,10 @@ export class ProcessTerminal implements Terminal {
 		if (this.mouseTrackingEnabled === enabled) return;
 		this.mouseTrackingEnabled = enabled;
 		if (enabled) {
-			// Enable X10 mouse mode + SGR extended coordinates
-			process.stdout.write("\x1b[?1000h\x1b[?1006h");
+			// Enable X10 mouse mode + button motion + SGR extended coordinates
+			process.stdout.write("\x1b[?1000h\x1b[?1002h\x1b[?1006h");
 		} else {
-			process.stdout.write("\x1b[?1000l\x1b[?1006l");
+			process.stdout.write("\x1b[?1000l\x1b[?1002l\x1b[?1006l");
 		}
 	}
 

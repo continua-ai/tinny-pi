@@ -345,7 +345,7 @@ export class SettingsSelectorComponent extends Container {
 		items.splice(continuaUiIndex + 1, 0, {
 			id: "mouse-tracking",
 			label: "Mouse interactions",
-			description: "Enable mouse scroll/click actions (requires Continua UI; disables terminal selection)",
+			description: "Enable mouse scroll/click actions (requires Continua UI; uses in-app selection)",
 			currentValue: mouseTracking ? "true" : "false",
 			values: ["true", "false"],
 		});

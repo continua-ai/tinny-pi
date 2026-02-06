@@ -16,9 +16,10 @@
 - Expanded the block action palette to pick a target block before choosing an action.
 - Added command palette entries and prompt status chips to reflect active block filters.
 - Added `terminal.continuaUi` setting to enable Continua UI enhancements, including output-only scrolling with a pinned prompt/footer.
-- Added `terminal.mouseTracking` setting (default on) to enable mouse scroll/click interactions in Continua UI mode.
+- Added `terminal.mouseTracking` setting to enable mouse scroll/click interactions in Continua UI mode.
 - Added mouse-click support on message/tool headers to toggle collapse in Continua UI mode.
 - Added right-click header shortcut to open block actions in Continua UI mode.
+- Added in-app mouse selection in the output view with release-to-copy and Ctrl+C copy.
 - Added block output filtering actions with regex, case sensitivity, invert, and context line controls.
 - Added block search and bookmark palettes for quick navigation across messages and tool output.
 - Added a block timeline palette to browse blocks with status and duration.
@@ -37,7 +38,7 @@
 - Fixed selector navigation wrapping at list boundaries to reduce scroll stutter.
 - Fixed sticky headers duplicating tool step cards when content shrinks under overlays.
 - Fixed prompt status filter chips truncating out of view on narrow layouts.
-- Fixed mouse selection being blocked by always-on mouse tracking in Continua UI mode by gating mouse interactions behind `terminal.mouseTracking`.
+- Fixed output text selection when mouse tracking is enabled by adding in-app selection support.
 
 ## [0.51.6] - 2026-02-04
 

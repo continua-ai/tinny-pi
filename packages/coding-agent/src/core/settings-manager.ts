@@ -23,7 +23,7 @@ export interface TerminalSettings {
 	showImages?: boolean; // default: true (only relevant if terminal supports images)
 	clearOnShrink?: boolean; // default: false (clear empty rows when content shrinks)
 	continuaUi?: boolean; // default: true (enable Continua UI enhancements)
-	mouseTracking?: boolean; // default: true (enable mouse scroll/click interactions)
+	mouseTracking?: boolean; // default: true (enable mouse scroll/click interactions; uses in-app selection)
 }
 
 export interface ImageSettings {

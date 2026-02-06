@@ -45,7 +45,7 @@ export class VirtualTerminal implements Terminal {
 		// Disable bracketed paste mode
 		this.xterm.write("\x1b[?2004l");
 		if (this.mouseTrackingEnabled) {
-			this.xterm.write("\x1b[?1000l\x1b[?1006l");
+			this.xterm.write("\x1b[?1000l\x1b[?1002l\x1b[?1006l");
 			this.mouseTrackingEnabled = false;
 		}
 		this.inputHandler = undefined;
@@ -104,9 +104,9 @@ export class VirtualTerminal implements Terminal {
 		if (this.mouseTrackingEnabled === enabled) return;
 		this.mouseTrackingEnabled = enabled;
 		if (enabled) {
-			this.xterm.write("\x1b[?1000h\x1b[?1006h");
+			this.xterm.write("\x1b[?1000h\x1b[?1002h\x1b[?1006h");
 		} else {
-			this.xterm.write("\x1b[?1000l\x1b[?1006l");
+			this.xterm.write("\x1b[?1000l\x1b[?1002l\x1b[?1006l");
 		}
 	}
 

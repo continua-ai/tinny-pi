@@ -38,6 +38,7 @@ import {
 	LINE_MARKER_PREFIX,
 	Loader,
 	Markdown,
+	type MouseButton,
 	type MouseEvent,
 	type MouseScrollEvent,
 	matchesKey,
@@ -158,6 +159,14 @@ function isHeaderMarkerTarget(obj: unknown): obj is HeaderMarkerTarget {
 		typeof obj === "object" && obj !== null && "setHeaderMarker" in obj && typeof obj.setHeaderMarker === "function"
 	);
 }
+
+type SelectionRegionKind = "output" | "editor";
+
+type SelectionRegion = {
+	kind: SelectionRegionKind;
+	startRow: number;
+	endRow: number;
+};
 
 interface HeaderBadgeTarget {
 	setHeaderBadge(badge?: string): void;
@@ -319,6 +328,9 @@ export class InteractiveMode {
 	// Continua UI toggle
 	private continuaUiEnabled = false;
 	private mouseTrackingEnabled = false;
+	private mouseSelectionAnchor: { row: number; col: number } | null = null;
+	private mouseSelectionRegion: SelectionRegion | null = null;
+	private isMouseSelecting = false;
 
 	// Block action palette state
 	private blockActionTargets: BlockActionTarget[] = [];
@@ -1455,6 +1467,10 @@ export class InteractiveMode {
 		const mouseEnabled = this.isMouseInteractionEnabled();
 		this.ui.onScroll = mouseEnabled ? (event) => this.handleOutputScroll(event) : undefined;
 		this.ui.onMouse = mouseEnabled ? (event) => this.handleMouseEvent(event) : undefined;
+		this.ui.setSelectionEnabled(mouseEnabled);
+		if (!mouseEnabled) {
+			this.clearMouseSelection();
+		}
 		if (this.isInitialized) {
 			this.ui.setMouseTracking(mouseEnabled);
 		}
@@ -1469,32 +1485,203 @@ export class InteractiveMode {
 
 	private handleOutputScroll(event: MouseScrollEvent): void {
 		if (!this.isMouseInteractionEnabled()) return;
+		this.clearMouseSelection();
 		const delta = event.delta * InteractiveMode.OUTPUT_SCROLL_LINES;
 		this.scrollLayout.scrollBy(delta);
 	}
 
+	private getOutputSelectableContentRange(width: number): { start: number; end: number } | null {
+		const headerLines = this.headerContainer.render(width).length;
+		const blockFilterLines = this.blockFilterContainer.render(width).length;
+		const chatLines = this.chatContainer.render(width).length;
+		const pendingLines = this.pendingMessagesContainer.render(width).length;
+		const selectableLines = chatLines + pendingLines;
+		if (selectableLines <= 0) return null;
+		const start = headerLines + blockFilterLines;
+		return { start, end: start + selectableLines - 1 };
+	}
+
+	private getOutputSelectionRegion(
+		width: number,
+		outputHeight: number,
+		scrollEnabled: boolean,
+	): SelectionRegion | null {
+		if (outputHeight <= 0) return null;
+		const selectable = this.getOutputSelectableContentRange(width);
+		if (!selectable) return null;
+		const scrollTop = scrollEnabled ? this.scrollLayout.getScrollTop() : 0;
+		const visibleStart = scrollTop;
+		const visibleEnd = scrollTop + outputHeight - 1;
+		const startContent = Math.max(selectable.start, visibleStart);
+		const endContent = Math.min(selectable.end, visibleEnd);
+		if (endContent < startContent) return null;
+		return {
+			kind: "output",
+			startRow: startContent - scrollTop,
+			endRow: endContent - scrollTop,
+		};
+	}
+
+	private getSelectionRegions(): { output: SelectionRegion | null; editor: SelectionRegion | null } {
+		const width = this.ui.terminal.columns;
+		const viewportHeight = this.ui.terminal.rows;
+		if (viewportHeight <= 0 || width <= 0) {
+			return { output: null, editor: null };
+		}
+
+		const scrollEnabled = this.scrollLayout.getScrollEnabled();
+		const promptLines = this.promptStatus.render(width).length;
+		const editorLines = this.editorContainer.render(width).length;
+		const widgetBelowLines = this.widgetContainerBelow.render(width).length;
+		const footerComponent = this.customFooter ?? this.footer;
+		const footerLines = footerComponent.render(width).length;
+		const fixedLines = promptLines + editorLines + widgetBelowLines + footerLines;
+		const fixedVisibleHeight = scrollEnabled ? Math.min(fixedLines, viewportHeight) : fixedLines;
+		const outputHeight = scrollEnabled ? Math.max(0, viewportHeight - fixedVisibleHeight) : viewportHeight;
+		const outputRegion = this.getOutputSelectionRegion(width, outputHeight, scrollEnabled);
+
+		if (!scrollEnabled || editorLines <= 0 || fixedLines <= 0) {
+			return { output: outputRegion, editor: null };
+		}
+
+		const fixedVisibleStart = Math.max(0, fixedLines - fixedVisibleHeight);
+		const editorStart = promptLines;
+		const editorEnd = promptLines + editorLines - 1;
+		const visibleStart = Math.max(editorStart, fixedVisibleStart);
+		const visibleEnd = Math.min(editorEnd, fixedLines - 1);
+		if (visibleEnd < visibleStart) {
+			return { output: outputRegion, editor: null };
+		}
+
+		const editorRegionStart = outputHeight + (visibleStart - fixedVisibleStart);
+		const editorRegionEnd = outputHeight + (visibleEnd - fixedVisibleStart);
+		if (editorRegionStart > editorRegionEnd || editorRegionStart >= viewportHeight) {
+			return { output: outputRegion, editor: null };
+		}
+
+		return {
+			output: outputRegion,
+			editor: {
+				kind: "editor",
+				startRow: editorRegionStart,
+				endRow: Math.min(editorRegionEnd, viewportHeight - 1),
+			},
+		};
+	}
+
+	private getSelectionRegionForRow(row: number): SelectionRegion | null {
+		const regions = this.getSelectionRegions();
+		if (regions.editor && row >= regions.editor.startRow && row <= regions.editor.endRow) {
+			return regions.editor;
+		}
+		if (regions.output && row >= regions.output.startRow && row <= regions.output.endRow) {
+			return regions.output;
+		}
+		return null;
+	}
+
+	private clampRowToRegion(row: number, region: SelectionRegion): number {
+		return Math.max(region.startRow, Math.min(row, region.endRow));
+	}
+
+	private clampSelectionPoint(
+		point: { row: number; col: number },
+		region: SelectionRegion,
+	): { row: number; col: number } {
+		return { row: this.clampRowToRegion(point.row, region), col: point.col };
+	}
+
 	private handleMouseEvent(event: MouseEvent): void {
 		if (!this.isMouseInteractionEnabled()) return;
-		if (event.type !== "button" || event.action !== "press") return;
+		if (event.type !== "button") return;
 		if (this.ui.hasOverlay()) return;
 
-		const marker = this.ui.getLineMarkerAt(event.y);
-		if (!marker) return;
-
-		const target = this.blockActionTargetById.get(marker);
-		if (!target) return;
-
 		if (event.button === "right") {
-			this.showBlockActionPaletteForTarget(target);
+			if (event.action === "press") {
+				this.clearMouseSelection();
+				this.handleMouseClick(event.y, event.button);
+			}
 			return;
 		}
 
 		if (event.button !== "left") return;
 
+		if (event.action === "press") {
+			const region = this.getSelectionRegionForRow(event.y);
+			if (!region) return;
+			this.clearMouseSelection();
+			this.mouseSelectionAnchor = { row: event.y, col: event.x };
+			this.mouseSelectionRegion = region;
+			this.isMouseSelecting = true;
+			return;
+		}
+
+		const region = this.mouseSelectionRegion;
+		if (!region || !this.isMouseSelecting || !this.mouseSelectionAnchor) return;
+
+		const start = this.clampSelectionPoint(this.mouseSelectionAnchor, region);
+		const end = { row: this.clampRowToRegion(event.y, region), col: event.x };
+
+		if (event.action === "drag") {
+			this.ui.setSelection({ start, end });
+			return;
+		}
+
+		if (event.action === "release") {
+			this.isMouseSelecting = false;
+			this.mouseSelectionAnchor = null;
+			this.mouseSelectionRegion = null;
+
+			if (start.row === end.row && start.col === end.col) {
+				this.clearMouseSelection();
+				if (region.kind === "output") {
+					this.handleMouseClick(end.row, event.button);
+				}
+				return;
+			}
+
+			this.ui.setSelection({ start, end });
+			this.copySelectionToClipboard();
+		}
+	}
+
+	private handleMouseClick(row: number, button: MouseButton): void {
+		const marker = this.ui.getLineMarkerAt(row);
+		if (!marker) return;
+
+		const target = this.blockActionTargetById.get(marker);
+		if (!target) return;
+
+		if (button === "right") {
+			this.showBlockActionPaletteForTarget(target);
+			return;
+		}
+
+		if (button !== "left") return;
+
 		if (target.kind === "tool") {
 			this.toggleToolExpandedForTarget(target);
 		} else {
 			this.toggleBlockCollapsedForTarget(target);
+		}
+	}
+
+	private clearMouseSelection(): void {
+		this.mouseSelectionAnchor = null;
+		this.mouseSelectionRegion = null;
+		this.isMouseSelecting = false;
+		this.ui.clearSelection();
+	}
+
+	private copySelectionToClipboard(): void {
+		if (!this.ui.hasSelection()) return;
+		const selection = this.ui.getSelectionText();
+		if (selection === null) return;
+		try {
+			copyToClipboard(selection);
+			this.showStatus("Copied selection to clipboard");
+		} catch (error) {
+			this.showError(error instanceof Error ? error.message : String(error));
 		}
 	}
 
@@ -4205,6 +4392,11 @@ export class InteractiveMode {
 	// =========================================================================
 
 	private handleCtrlC(): void {
+		if (this.ui.hasSelection()) {
+			this.copySelectionToClipboard();
+			return;
+		}
+
 		const now = Date.now();
 		if (now - this.lastSigintTime < 500) {
 			void this.shutdown();

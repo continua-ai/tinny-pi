@@ -17,7 +17,7 @@ export type MouseButton = "left" | "middle" | "right";
 
 export type MouseButtonEvent = {
 	type: "button";
-	action: "press" | "release";
+	action: "press" | "release" | "drag";
 	button: MouseButton;
 	x: number;
 	y: number;
@@ -70,7 +70,6 @@ export function parseMouseEvent(data: string): MouseEvent | null {
 	}
 
 	const isMotion = (code & 32) !== 0;
-	if (isMotion) return null;
 
 	const buttonCode = code & 3;
 	let button: MouseButton;
@@ -84,7 +83,7 @@ export function parseMouseEvent(data: string): MouseEvent | null {
 		return null;
 	}
 
-	const action = match[4] === "m" ? "release" : "press";
+	const action = isMotion ? "drag" : match[4] === "m" ? "release" : "press";
 	return {
 		type: "button",
 		action,

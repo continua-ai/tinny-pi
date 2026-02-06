@@ -33,6 +33,22 @@ export type ViewportRenderResult = {
 };
 
 /**
+ * Selection point in viewport coordinates.
+ */
+export type SelectionPoint = {
+	row: number;
+	col: number;
+};
+
+/**
+ * Selection range in viewport coordinates.
+ */
+export type SelectionRange = {
+	start: SelectionPoint;
+	end: SelectionPoint;
+};
+
+/**
  * Component interface - all components must implement this
  */
 export interface Component {
@@ -104,6 +120,19 @@ export function createLineMarker(id: string): string {
 }
 
 export { visibleWidth };
+
+const SELECTION_START = "\x1b[7m";
+const SELECTION_END = "\x1b[27m";
+
+function stripAnsiSequences(text: string): string {
+	if (!text.includes("\x1b")) return text;
+	let clean = text;
+	clean = clean.replace(/\x1b\[[0-9;]*[mGKHJ]/g, "");
+	clean = clean.replace(/\x1b\]8;;[^\x07\x1b]*(?:\x07|\x1b\\)/g, "");
+	clean = clean.replace(/\x1b\][0-9;]*[^\x07\x1b]*(?:\x07|\x1b\\)/g, "");
+	clean = clean.replace(/\x1b_[^\x07\x1b]*(?:\x07|\x1b\\)/g, "");
+	return clean;
+}
 
 /**
  * Anchor position for overlays
@@ -276,6 +305,8 @@ export class TUI extends Container {
 	private showHardwareCursor = process.env.PI_HARDWARE_CURSOR === "1";
 	private clearOnShrink = process.env.PI_CLEAR_ON_SHRINK === "1"; // Clear empty rows when content shrinks (default: off)
 	private mouseTrackingEnabled = false;
+	private selectionEnabled = false;
+	private selectionRange: SelectionRange | null = null;
 	private maxLinesRendered = 0; // Track terminal's working area (max lines ever rendered)
 	private previousViewportTop = 0; // Track previous viewport top for resize-aware cursor moves
 	private lineMarkers = new Map<number, string>();
@@ -338,6 +369,71 @@ export class TUI extends Container {
 		if (!this.stopped) {
 			this.terminal.setMouseTracking(enabled);
 		}
+	}
+
+	getSelectionEnabled(): boolean {
+		return this.selectionEnabled;
+	}
+
+	setSelectionEnabled(enabled: boolean): void {
+		if (this.selectionEnabled === enabled) return;
+		this.selectionEnabled = enabled;
+		if (!enabled) {
+			this.selectionRange = null;
+			this.requestRender();
+		}
+	}
+
+	setSelection(range: SelectionRange | null): void {
+		if (!this.selectionEnabled) return;
+		if (!range) {
+			this.clearSelection();
+			return;
+		}
+		this.selectionRange = {
+			start: { row: range.start.row, col: range.start.col },
+			end: { row: range.end.row, col: range.end.col },
+		};
+		this.requestRender();
+	}
+
+	clearSelection(): void {
+		if (!this.selectionRange) return;
+		this.selectionRange = null;
+		this.requestRender();
+	}
+
+	hasSelection(): boolean {
+		if (!this.selectionRange || !this.selectionEnabled) return false;
+		const { start, end } = this.selectionRange;
+		return start.row !== end.row || start.col !== end.col;
+	}
+
+	getSelectionText(): string | null {
+		const normalized = this.getNormalizedSelection(this.previousLines);
+		if (!normalized) return null;
+		const { startRow, startCol, endRow, endCol } = normalized;
+		const lines: string[] = [];
+		for (let row = startRow; row <= endRow; row += 1) {
+			const line = this.previousLines[row] ?? "";
+			if (isImageLine(line)) {
+				lines.push("");
+				continue;
+			}
+			const lineWidth = visibleWidth(line);
+			const rowStart = row === startRow ? startCol : 0;
+			const rowEnd = row === endRow ? endCol : lineWidth;
+			const clampedStart = Math.max(0, Math.min(rowStart, lineWidth));
+			const clampedEnd = Math.max(0, Math.min(rowEnd, lineWidth));
+			if (clampedEnd <= clampedStart) {
+				lines.push("");
+				continue;
+			}
+			const segment = sliceWithWidth(line, clampedStart, clampedEnd - clampedStart, true).text;
+			lines.push(stripAnsiSequences(segment));
+		}
+		const result = lines.join("\n");
+		return result.length > 0 ? result : null;
 	}
 
 	getLineMarkerAt(row: number): string | undefined {
@@ -978,6 +1074,54 @@ export class TUI extends Container {
 		return null;
 	}
 
+	private getNormalizedSelection(
+		lines: string[],
+	): { startRow: number; startCol: number; endRow: number; endCol: number } | null {
+		if (!this.selectionEnabled || !this.selectionRange || lines.length === 0) return null;
+
+		const maxRow = Math.max(0, lines.length - 1);
+		let startRow = Math.max(0, Math.min(this.selectionRange.start.row, maxRow));
+		let startCol = Math.max(0, this.selectionRange.start.col);
+		let endRow = Math.max(0, Math.min(this.selectionRange.end.row, maxRow));
+		let endCol = Math.max(0, this.selectionRange.end.col);
+
+		if (startRow > endRow || (startRow === endRow && startCol > endCol)) {
+			[startRow, endRow] = [endRow, startRow];
+			[startCol, endCol] = [endCol, startCol];
+		}
+
+		if (startRow === endRow && startCol === endCol) return null;
+
+		return { startRow, startCol, endRow, endCol: endCol + 1 };
+	}
+
+	private applySelection(lines: string[]): void {
+		const normalized = this.getNormalizedSelection(lines);
+		if (!normalized) return;
+		const { startRow, startCol, endRow, endCol } = normalized;
+
+		for (let row = startRow; row <= endRow && row < lines.length; row += 1) {
+			const line = lines[row] ?? "";
+			if (isImageLine(line)) continue;
+			const lineWidth = visibleWidth(line);
+			const rowStart = row === startRow ? startCol : 0;
+			const rowEnd = row === endRow ? endCol : lineWidth;
+			const clampedStart = Math.max(0, Math.min(rowStart, lineWidth));
+			const clampedEnd = Math.max(0, Math.min(rowEnd, lineWidth));
+			if (clampedEnd <= clampedStart) continue;
+			lines[row] = this.applySelectionToLine(line, clampedStart, clampedEnd);
+		}
+	}
+
+	private applySelectionToLine(line: string, startCol: number, endCol: number): string {
+		const lineWidth = visibleWidth(line);
+		const afterLen = Math.max(0, lineWidth - endCol);
+		const { before, after } = extractSegments(line, startCol, endCol, afterLen, true);
+		const selected = sliceWithWidth(line, startCol, endCol - startCol, true).text;
+		const plain = stripAnsiSequences(selected);
+		return `${before}${SELECTION_START}${plain}${SELECTION_END}${after}`;
+	}
+
 	private doRender(): void {
 		if (this.stopped) return;
 		const width = this.terminal.columns;
@@ -1006,6 +1150,7 @@ export class TUI extends Container {
 		const cursorPos = this.extractCursorPosition(newLines, height);
 
 		newLines = this.applyLineResets(newLines);
+		this.applySelection(newLines);
 
 		// Width changed - need full re-render (line wrapping changes)
 		const widthChanged = this.previousWidth !== 0 && this.previousWidth !== width;
