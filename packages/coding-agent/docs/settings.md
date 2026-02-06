@@ -105,7 +105,7 @@ When a provider requests a retry delay longer than `maxDelayMs` (e.g., Google's 
 |---------|------|---------|-------------|
 | `terminal.showImages` | boolean | `true` | Show images in terminal (if supported) |
 | `terminal.continuaUi` | boolean | `true` | Enable Continua UI enhancements (output-only scroll, clickable headers). Set `false` for legacy scrolling. |
-| `terminal.mouseTracking` | boolean | `true` | Enable mouse scroll/click interactions for Continua UI (disables standard terminal selection in most terminals). |
+| `terminal.mouseTracking` | boolean | `true` | Enable mouse scroll/click interactions for Continua UI (uses in-app selection; release copies selection, Ctrl+C also works). |
 | `images.autoResize` | boolean | `true` | Resize images to 2000x2000 max |
 | `images.blockImages` | boolean | `false` | Block all images from being sent to LLM |
 

@@ -71,7 +71,7 @@ Modifier combinations: `ctrl+shift+x`, `alt+ctrl+x`, `ctrl+shift+alt+x`, etc.
 | Action | Default | Description |
 |--------|---------|-------------|
 | `interrupt` | `escape` | Cancel / abort |
-| `clear` | `ctrl+c` | Clear editor |
+| `clear` | `ctrl+c` | Clear editor (copies output selection when active) |
 | `exit` | `ctrl+d` | Exit (when editor empty) |
 | `suspend` | `ctrl+z` | Suspend to background |
 | `externalEditor` | `ctrl+g` | Open in external editor (`$VISUAL` or `$EDITOR`) |

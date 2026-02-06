@@ -97,6 +97,8 @@ export {
 	type OverlayHandle,
 	type OverlayMargin,
 	type OverlayOptions,
+	type SelectionPoint,
+	type SelectionRange,
 	type SizeValue,
 	TUI,
 	type ViewportInfo,
